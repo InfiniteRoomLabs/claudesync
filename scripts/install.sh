@@ -294,13 +294,13 @@ claudesync() {
   fi
 
   # -- run container --
-  # Use -it (interactive + TTY) when no args so the TUI can render
-  local _cs_docker_flags="--rm -e CLAUDE_AI_COOKIE -v $(pwd):/data"
-  if [ $# -eq 0 ] && [ -t 0 ]; then
-    _cs_docker_flags="-it ${_cs_docker_flags}"
-  fi
+  # Use -it (interactive + TTY) for the tui subcommand so Ink gets raw mode
+  local _cs_tty_flag=""
+  case "$1" in tui) _cs_tty_flag="-it" ;; esac
   CLAUDE_AI_COOKIE="${_cs_cookie_header}" \
-    docker run ${_cs_docker_flags} \
+    docker run --rm ${_cs_tty_flag} \
+      -e CLAUDE_AI_COOKIE \
+      -v "$(pwd):/data" \
       deathnerd/claudesync:latest \
       "$@"
 }
@@ -431,13 +431,15 @@ FISH_FUNCTION='function claudesync
     end
 
     # -- run container --
-    # Use -it when no args so the TUI can render
-    set -l _cs_docker_args --rm -e CLAUDE_AI_COOKIE -v (pwd)":/data"
-    if test (count $argv) -eq 0; and isatty stdin
-        set _cs_docker_args -it $_cs_docker_args
+    # Use -it for the tui subcommand so Ink gets raw mode
+    set -l _cs_tty_flag
+    if test (count $argv) -ge 1; and test "$argv[1]" = "tui"
+        set _cs_tty_flag -it
     end
     CLAUDE_AI_COOKIE="$_cs_cookie_header" \
-        docker run $_cs_docker_args \
+        docker run --rm $_cs_tty_flag \
+            -e CLAUDE_AI_COOKIE \
+            -v (pwd)":/data" \
             deathnerd/claudesync:latest \
             $argv
 end

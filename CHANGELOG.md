@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - TUI is now `claudesync tui` subcommand (was auto-launch on no args, unreliable across npx/Docker)
 
+### Fixed
+- Docker wrapper passes `-it` flags when running `tui` subcommand (Ink requires TTY for raw mode)
+
 ## [0.3.0] - 2026-03-15
 
 ### Added
