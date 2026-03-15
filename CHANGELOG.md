@@ -26,6 +26,10 @@ All notable changes to this project will be documented in this file.
 - Consolidated design review (`docs/spike-results/design-review.md`)
 - Sprint architecture and task documents
 
+### Added (Infrastructure)
+- Docker Hub repository `deathnerd/claudesync-mcp` managed via Terraform (`docker/docker` provider)
+- Release pipeline pushes to both Docker Hub and ghcr.io
+
 ### Added (Phase 3)
 - `claudesync` CLI tool with 4 commands: `ls`, `export`, `projects`, `search`
 - `claudesync export <id>` creates a git repo from a conversation with artifacts
