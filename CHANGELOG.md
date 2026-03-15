@@ -27,7 +27,9 @@ All notable changes to this project will be documented in this file.
 - Sprint architecture and task documents
 
 ### Added (Infrastructure)
-- Docker Hub repository `deathnerd/claudesync-mcp` managed via Terraform (`docker/docker` provider)
+- Docker Hub repositories: `deathnerd/claudesync-mcp` (MCP server) and `deathnerd/claudesync` (CLI)
+- Dockerfile supports two targets: `--target mcp` and `--target cli`
+- CLI container includes git for `exportToGit()`, runs as UID 1000 (host-compatible)
 - Release pipeline pushes to both Docker Hub and ghcr.io
 
 ### Added (Phase 3)
