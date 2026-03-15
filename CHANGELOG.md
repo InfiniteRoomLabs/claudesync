@@ -26,6 +26,10 @@ All notable changes to this project will be documented in this file.
 - Consolidated design review (`docs/spike-results/design-review.md`)
 - Sprint architecture and task documents
 
+### Improved
+- `claudesync projects list` now shows UUIDs for easy copy-paste into `projects export`
+- `claudesync ls` and `projects list` show export hint at the bottom
+
 ### Added (Project Export)
 - `claudesync projects export <project-id>` -- exports entire project as git repo
   - Knowledge docs in `knowledge/`, conversations in `conversations/{slug}/`

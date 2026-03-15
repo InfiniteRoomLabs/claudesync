@@ -57,4 +57,5 @@ export const lsCommand = new Command("ls")
     }
 
     console.log(`\n  ${conversations.length} conversation(s) shown.`);
+    console.log(`  Export a conversation: claudesync export <UUID>`);
   });

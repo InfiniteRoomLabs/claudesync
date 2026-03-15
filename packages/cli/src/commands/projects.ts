@@ -34,23 +34,20 @@ projectsCommand
       return;
     }
 
-    const nameWidth = 30;
-    const descWidth = 40;
-
     console.log(
-      `  ${"Name".padEnd(nameWidth)}  ${"Description".padEnd(descWidth)}  Docs`
+      `  ${"UUID".padEnd(38)}  ${"Name".padEnd(30)}  Docs`
     );
 
     for (const project of projects) {
-      const name = truncate(project.name, nameWidth);
-      const desc = truncate(project.description ?? "", descWidth);
+      const name = truncate(project.name, 30);
       const docs = project.docs_count ?? 0;
       console.log(
-        `  ${name.padEnd(nameWidth)}  ${desc.padEnd(descWidth)}  ${docs}`
+        `  ${project.uuid.padEnd(38)}  ${name.padEnd(30)}  ${docs}`
       );
     }
 
     console.log(`\n  ${projects.length} project(s) found.`);
+    console.log(`  Export a project: claudesync projects export <UUID>`);
   });
 
 // --- projects export ---
