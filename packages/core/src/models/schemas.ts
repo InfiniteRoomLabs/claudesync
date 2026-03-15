@@ -24,7 +24,7 @@ export const ConversationSettingsSchema = z
 export const AttachmentSchema = z
   .object({
     file_name: z.string(),
-    file_size: z.string(),
+    file_size: z.union([z.string(), z.number()]),
     file_type: z.string(),
   })
   .passthrough();

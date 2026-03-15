@@ -192,6 +192,16 @@ export class ClaudeSyncClient {
     return z.array(ProjectDocSchema).parse(data);
   }
 
+  async getProjectConversations(
+    orgId: string,
+    projectId: string
+  ): Promise<ConversationSummary[]> {
+    const data = await this.request(
+      buildUrl(ENDPOINTS.projectConversations(orgId, projectId))
+    );
+    return z.array(ConversationSummarySchema).parse(data);
+  }
+
   // --- Artifacts (wiggle filesystem) ---
 
   async listArtifacts(

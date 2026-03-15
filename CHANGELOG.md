@@ -26,6 +26,14 @@ All notable changes to this project will be documented in this file.
 - Consolidated design review (`docs/spike-results/design-review.md`)
 - Sprint architecture and task documents
 
+### Added (Project Export)
+- `claudesync projects export <project-id>` -- exports entire project as git repo
+  - Knowledge docs in `knowledge/`, conversations in `conversations/{slug}/`
+  - Each conversation includes conversation.md, README.md, and artifacts/
+  - Supports `--skip-artifacts` for faster export, `--format json` for GitBundle output
+- `claudesync projects list` (default subcommand, same as before)
+- `ClaudeSyncClient.getProjectConversations()` method added to core SDK
+
 ### Added (Installer Scripts)
 - `scripts/install.sh` -- pipe-to-shell installer (bash, zsh, fish)
   - Auto-reads Firefox cookie via sqlite3 (standard, Snap, Flatpak, macOS paths)
