@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `@claudesync/core` SDK with Zod schemas, auth module, HTTP client, message tree utilities (44 tests passing)
+- `@claudesync/mcp-server` with 4 MCP tools: list_organizations, list_conversations, get_conversation, search_conversations
+- Zod schemas for 12 API response types with `.passthrough()` for forward compatibility
+- `EnvAuth` with security hardening (clears cookie from process.env after reading)
+- `ClaudeSyncClient` with configurable rate limiting (300ms default), defensive search double-parse
+- Message tree utilities: `buildMessageTree()`, `getLinearBranch()`, `findLeafMessages()`
+- `downloadArtifact()` with path traversal protection and binary content support
 - Technical spike: mapped 24 claude.ai API endpoints across 6 categories
 - Discovered "wiggle" artifact filesystem API (artifacts are NOT inline XML)
 - Documented message tree structure via `parent_message_uuid` branching
