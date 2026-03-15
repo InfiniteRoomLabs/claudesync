@@ -41,6 +41,8 @@ All notable changes to this project will be documented in this file.
 - Live-tested: successfully exported a conversation with artifacts to a 2-commit git repo
 
 ### Fixed
+- Dockerfile: add `--legacy` flag to `pnpm deploy` for pnpm v10 compatibility
+- Docker image builds and runs successfully (385MB, node:24-slim)
 - Zod schemas now accept `null` for `current_leaf_message_uuid`, `enabled_web_search`, `enabled_mcp_tools`, `docs_count`, `files_count` (discovered via live API testing against 1,375 conversations)
 
 ### Changed

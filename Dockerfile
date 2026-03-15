@@ -38,7 +38,8 @@ RUN pnpm --filter @claudesync/core build && \
     pnpm --filter @claudesync/mcp-server build
 
 # Prune to production dependencies only
-RUN pnpm --filter @claudesync/mcp-server --prod deploy /app/pruned
+# --legacy required for pnpm v10+ with non-injected workspace deps
+RUN pnpm --filter @claudesync/mcp-server --prod deploy --legacy /app/pruned
 
 # ---- Stage 3: runtime ----
 # Slim production image -- no build tools, no source code
