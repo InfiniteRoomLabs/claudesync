@@ -11,7 +11,7 @@ const program = new Command();
 program
   .name("claudesync")
   .description("ClaudeSync -- Export claude.ai conversations as git repositories")
-  .version("0.1.0");
+  .version("0.2.1");
 
 program.addCommand(lsCommand);
 program.addCommand(exportCommand);
@@ -20,7 +20,6 @@ program.addCommand(searchCommand);
 
 // Global error handling
 program.hook("preAction", () => {
-  // Set up unhandled rejection handler before each command
   process.on("unhandledRejection", handleError);
 });
 
@@ -51,4 +50,13 @@ function handleError(error: unknown): void {
   process.exit(1);
 }
 
-program.parseAsync(process.argv).catch(handleError);
+// If no subcommand given, launch interactive TUI
+if (process.argv.length <= 2) {
+  import("ink").then(async ({ render }) => {
+    const { createElement } = await import("react");
+    const { App } = await import("./tui/App.js");
+    render(createElement(App));
+  }).catch(handleError);
+} else {
+  program.parseAsync(process.argv).catch(handleError);
+}

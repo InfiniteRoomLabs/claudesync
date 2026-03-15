@@ -26,6 +26,14 @@ All notable changes to this project will be documented in this file.
 - Consolidated design review (`docs/spike-results/design-review.md`)
 - Sprint architecture and task documents
 
+### Added (TUI)
+- Interactive terminal browser: run `claudesync` with no subcommand to launch
+- Miller Columns (Finder-style) navigation: 3-column drill-down through orgs > conversations > details
+- Vim keybinds: h/j/k/l for navigation, / for search, e for export, q to quit
+- Detail pane shows conversation metadata (model, dates, starred, project)
+- Search overlay filters current column items
+- Built with React + Ink (terminal React renderer)
+
 ### Added (CLI)
 - `--query` flag on all commands with `--json` output (JMESPath filtering, AWS CLI style)
   - `claudesync ls --query "[].{uuid: uuid, name: name}"`
