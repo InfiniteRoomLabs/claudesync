@@ -1,53 +1,97 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# CLAUDE.md -- ClaudeSync
 
 ## What This Is
 
-This repository was created from the `InfiniteRoomLabs/template-repo` template. It comes pre-configured with Spec Kitty for structured, spec-driven development.
+ClaudeSync is a TypeScript/Node.js SDK wrapping the undocumented claude.ai web API, enabling programmatic access to conversations, artifacts, and projects. First consumer: an MCP server exposing conversation data to Claude Code and other MCP clients. Future consumers: CLI for export/sync, Firefox extension for in-browser export.
 
-## First-Time Setup
+**Philosophy:** yt-dlp energy. Unofficial, community tool, your-data-is-yours. MIT licensed.
 
-If this project has no `kitty-specs/` directory yet, it hasn't been initialized for development work. **Prompt the user to run `/init` to set up the project.** Offer to brainstorm if they're still figuring out what to build.
+## Key Documents
 
-## Spec Kitty
+- `docs/PRD.md` -- Full product requirements document (v0.3.0, updated with spike findings)
+- `docs/plans/2026-03-10-claudesync-implementation.md` -- Implementation plan
+- `docs/plans/2026-03-10-claudesync-monorepo-design.md` -- Monorepo architecture decisions
+- `docs/spike-results/findings.md` -- Technical spike results (API shapes, auth, artifacts)
+- `docs/spike-results/design-review.md` -- Consolidated design review from 4 specialist agents
 
-This repo uses **Spec Kitty** for structured development workflows.
+**Read `docs/PRD.md` first.** Then `docs/spike-results/findings.md` for ground-truth API data.
 
-### Workflow Phases (in order)
-`specify` -> `plan` -> `tasks` -> `implement` -> `review` -> `accept` -> `merge`
+## Architecture
 
-Each phase has a corresponding `/spec-kitty.{phase}` command. Always run them in sequence.
-
-### Three Mission Types
-- **software-dev**: research -> design -> implement -> test -> review. TDD-first, library-first architecture.
-- **research**: question -> methodology -> gather -> analyze -> synthesize -> publish. Tracks sources in CSV evidence logs.
-- **documentation**: discover -> audit -> design -> generate -> validate -> publish. Follows Divio 4-type system (tutorial, how-to, reference, explanation).
-
-### Key Directories
-- `.kittify/` -- Mission definitions, templates, and scripts. Ignored by `.claudeignore` -- do not scan.
-- `.claude/commands/spec-kitty.*.md` -- Agent-facing commands generated from `.kittify/` templates.
-- `kitty-specs/NNN-feature-name/` -- Working artifacts for each feature (spec.md, plan.md, tasks.md, etc.).
-
-## Agent Marketplace
-
-This project is configured to use the Infinite Room Labs private Claude Code marketplace. Install plugins with:
+Three-layer design:
 
 ```
-/plugin marketplace add InfiniteRoomLabs/agent-ops
-/plugin install core@infinite-room-labs
+Consumers (thin shells): MCP Server | CLI | Firefox Extension
+                              |        |        |
+Core SDK:              @claudesync/core (TypeScript)
+                       Auth | API Client | Artifact Client | Git Export
+                              |
+Transport:             claude.ai Web API (undocumented, cookie auth)
 ```
+
+Monorepo using pnpm workspaces:
+- `packages/core/` -- The SDK (`@claudesync/core`)
+- `packages/mcp-server/` -- MCP server (`@claudesync/mcp-server`)
+- `packages/cli/` -- CLI tool (`@claudesync/cli`) -- stub
+- `packages/extension/` -- Firefox extension -- future
+
+## Current Phase: Implementation (Phase 1)
+
+Technical spike is complete. All 9 PRD open questions answered. Key findings:
+- Artifacts use "wiggle" filesystem (NOT inline XML) -- separate list/download API
+- Messages form a tree via `parent_message_uuid` (NOT a flat array)
+- Wiggle stores latest version only -- no version history
+- Node.js v24 LTS passes Cloudflare TLS; Bun and curl are blocked
+- Session cookie is `sessionKey` (httpOnly); any browser UA string works
+
+Phase 1 deliverables: Core SDK + MCP Server (3 tools: list_orgs, list_convos, get_convo).
+
+## Tech Stack
+
+- Node.js v24 LTS (required -- Bun blocked by Cloudflare TLS fingerprinting)
+- TypeScript (strict mode, ESM, NodeNext module resolution)
+- pnpm (package management + workspaces)
+- Zod (API response validation with `.passthrough()` for forward compat)
+- Vitest (testing)
+- better-sqlite3 (Firefox cookie reading)
+- @modelcontextprotocol/sdk (MCP server)
 
 ## Conventions
 
-### File Encoding
-**UTF-8 only.** No Windows-1252 smart quotes, em/en dashes, or copy-pasted Office characters. Use ASCII equivalents (`"` not curly quotes, `-` not em dash, `->` not arrows). Run `spec-kitty validate-encoding --feature <id>` to check, add `--fix` to auto-repair.
+### Node/TypeScript
+- Use `pnpm` for package management
+- ESM modules (`"type": "module"`)
+- Strict TypeScript (`strict: true`, no `any`)
+- Module resolution: `NodeNext` (requires `.js` extensions on imports)
+- Zod schemas for all API response types
+- Tests with Vitest using synthetic fixtures (no real PII)
 
-### Path References
-Always use absolute paths or paths relative to project root. Never refer to a folder by name alone.
+### Security
+- Never commit `.env` files or session cookies
+- Clear `CLAUDE_AI_COOKIE` from `process.env` after reading
+- Validate artifact paths; use `path.basename()` for local file writes
+- MCP server: stdio transport only (network transport is unsafe without auth)
+
+### File Encoding
+**UTF-8 only.** No smart quotes, em dashes, or Office characters.
 
 ### Git Discipline
-- Never commit agent directories (`.claude/`, `.codex/`, `.gemini/`, etc.)
 - Imperative mood commit messages
 - Never rewrite shared branch history
 - Never commit secrets or credentials
+
+## Spec Kitty
+
+This repo uses Spec Kitty for structured development.
+
+### Workflow Phases
+`specify` -> `plan` -> `tasks` -> `implement` -> `review` -> `accept` -> `merge`
+
+Each phase has a corresponding `/spec-kitty.{phase}` command.
+
+## Agent Marketplace
+
+This project uses the IRL private marketplace:
+```
+/plugin install agency@infinite-room-labs
+```

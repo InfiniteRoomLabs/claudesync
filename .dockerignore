@@ -1,0 +1,47 @@
+# Version control
+.git
+.gitignore
+
+# Documentation
+docs/
+*.md
+LICENSE
+
+# Agent / IDE config
+.claude/
+.codex/
+.opencode/
+.windsurf/
+.gemini/
+.cursor/
+.qwen/
+.kilocode/
+.augment/
+.roo/
+.amazonq/
+.github/
+.kittify/
+.vscode/
+.idea/
+
+# Dependencies (rebuilt in container)
+node_modules/
+
+# Build output (rebuilt in container)
+dist/
+*.tsbuildinfo
+coverage/
+
+# Environment / secrets
+.env
+.env.*
+.env.local
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Spec Kitty artifacts
+kitty-specs/
