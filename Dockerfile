@@ -64,6 +64,7 @@ ENTRYPOINT ["node", "dist/index.js"]
 # Includes git for exportToGit(). Uses the built-in node user (UID 1000)
 # which matches most host users -- files written to mounted volumes are
 # owned by the host user without needing --user flags.
+# WORKDIR is /data (the mount point) so relative paths resolve to the host CWD.
 FROM node:24-slim AS cli
 
 LABEL org.opencontainers.image.title="ClaudeSync CLI" \
@@ -74,10 +75,11 @@ LABEL org.opencontainers.image.title="ClaudeSync CLI" \
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /data && chown node:node /data
 
-WORKDIR /app
 COPY --from=builder --chown=node:node /app/pruned-cli /app
 USER node
+WORKDIR /data
 
-ENTRYPOINT ["node", "dist/index.js"]
+ENTRYPOINT ["node", "/app/dist/index.js"]

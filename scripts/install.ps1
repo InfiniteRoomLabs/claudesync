@@ -545,6 +545,105 @@ else {
 }
 
 # ---------------------------------------------------------------------------
+# Install tab completion (Register-ArgumentCompleter)
+# ---------------------------------------------------------------------------
+$CompletionMarker = "# claudesync tab completion"
+$CompletionBody = @'
+
+# claudesync tab completion
+Register-ArgumentCompleter -CommandName claudesync -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $subcommands = @(
+        [System.Management.Automation.CompletionResult]::new('ls',       'ls',       'ParameterValue', 'List conversations')
+        [System.Management.Automation.CompletionResult]::new('export',   'export',   'ParameterValue', 'Export a conversation to a git repository')
+        [System.Management.Automation.CompletionResult]::new('projects', 'projects', 'ParameterValue', 'List projects')
+        [System.Management.Automation.CompletionResult]::new('search',   'search',   'ParameterValue', 'Search conversations')
+    )
+
+    $lsFlags = @(
+        [System.Management.Automation.CompletionResult]::new('--org',     '--org',     'ParameterName', 'Organization ID')
+        [System.Management.Automation.CompletionResult]::new('--limit',   '--limit',   'ParameterName', 'Max conversations to show')
+        [System.Management.Automation.CompletionResult]::new('--starred', '--starred', 'ParameterName', 'Show only starred conversations')
+        [System.Management.Automation.CompletionResult]::new('--json',    '--json',    'ParameterName', 'Output as JSON')
+        [System.Management.Automation.CompletionResult]::new('--help',    '--help',    'ParameterName', 'Show help')
+    )
+
+    $exportFlags = @(
+        [System.Management.Automation.CompletionResult]::new('--org',          '--org',          'ParameterName', 'Organization ID')
+        [System.Management.Automation.CompletionResult]::new('--output',       '--output',       'ParameterName', 'Output directory')
+        [System.Management.Automation.CompletionResult]::new('--format',       '--format',       'ParameterName', 'Output format: git or json')
+        [System.Management.Automation.CompletionResult]::new('--author-name',  '--author-name',  'ParameterName', 'Git author name')
+        [System.Management.Automation.CompletionResult]::new('--author-email', '--author-email', 'ParameterName', 'Git author email')
+        [System.Management.Automation.CompletionResult]::new('--help',         '--help',         'ParameterName', 'Show help')
+    )
+
+    $projectsFlags = @(
+        [System.Management.Automation.CompletionResult]::new('--org',  '--org',  'ParameterName', 'Organization ID')
+        [System.Management.Automation.CompletionResult]::new('--json', '--json', 'ParameterName', 'Output as JSON')
+        [System.Management.Automation.CompletionResult]::new('--help', '--help', 'ParameterName', 'Show help')
+    )
+
+    $searchFlags = @(
+        [System.Management.Automation.CompletionResult]::new('--org',   '--org',   'ParameterName', 'Organization ID')
+        [System.Management.Automation.CompletionResult]::new('--limit', '--limit', 'ParameterName', 'Max results to show')
+        [System.Management.Automation.CompletionResult]::new('--json',  '--json',  'ParameterName', 'Output as JSON')
+        [System.Management.Automation.CompletionResult]::new('--help',  '--help',  'ParameterName', 'Show help')
+    )
+
+    $formatValues = @(
+        [System.Management.Automation.CompletionResult]::new('git',  'git',  'ParameterValue', 'Export as git repository')
+        [System.Management.Automation.CompletionResult]::new('json', 'json', 'ParameterValue', 'Export as JSON')
+    )
+
+    $elements = $commandAst.CommandElements
+    $subcmd = $null
+    for ($i = 1; $i -lt $elements.Count; $i++) {
+        $e = $elements[$i].ToString()
+        if ($e -in @('ls', 'export', 'projects', 'search')) {
+            $subcmd = $e
+            break
+        }
+    }
+
+    # Complete --format values
+    if ($elements.Count -ge 2) {
+        $prevElement = $elements[$elements.Count - 2].ToString()
+        if ($prevElement -eq '--format') {
+            return $formatValues | Where-Object { $_.CompletionText -like "$wordToComplete*" }
+        }
+    }
+
+    if (-not $subcmd) {
+        $all = $subcommands + @(
+            [System.Management.Automation.CompletionResult]::new('--help',    '--help',    'ParameterName', 'Show help')
+            [System.Management.Automation.CompletionResult]::new('--version', '--version', 'ParameterName', 'Show version')
+        )
+        return $all | Where-Object { $_.CompletionText -like "$wordToComplete*" }
+    }
+
+    $flags = switch ($subcmd) {
+        'ls'       { $lsFlags }
+        'export'   { $exportFlags }
+        'projects' { $projectsFlags }
+        'search'   { $searchFlags }
+    }
+
+    return $flags | Where-Object { $_.CompletionText -like "$wordToComplete*" }
+}
+'@
+
+Write-Info "Installing tab completion..."
+$profileContent = Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue
+if ($profileContent -and $profileContent.Contains($CompletionMarker)) {
+    Write-Info "Tab completion already installed in $PROFILE"
+}
+else {
+    Add-Content -Path $PROFILE -Value $CompletionBody
+    Write-Success "Installed tab completion into $PROFILE"
+}
+
+# ---------------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------------
 Write-Host ""
@@ -556,6 +655,8 @@ Write-Host ""
 Write-Host "  Then use claudesync as you would the CLI:"
 Write-Host "    claudesync --help" -ForegroundColor Cyan
 Write-Host "    claudesync export --org <id> --conversation <id>" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Tab completion is installed. Press Tab to complete subcommands and flags."
 Write-Host ""
 Write-Host "  Files written by export commands land in the current directory"
 Write-Host "  (mounted as /data inside the container)."

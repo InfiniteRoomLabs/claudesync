@@ -561,6 +561,100 @@ case "${USER_SHELL}" in
 esac
 
 # ---------------------------------------------------------------------------
+# Install shell completions
+# ---------------------------------------------------------------------------
+
+# URL base for downloading completion scripts (or local path when running from repo)
+_script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
+
+# Try local repo first, then fall back to downloading from GitHub
+_get_completion_file() {
+    _comp_name="$1"
+    _comp_dest="$2"
+    _local_src="${_script_dir}/completions/${_comp_name}"
+    if [ -f "${_local_src}" ]; then
+        cp "${_local_src}" "${_comp_dest}"
+        return 0
+    fi
+    # Download from GitHub
+    _url="https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main/scripts/completions/${_comp_name}"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "${_url}" -o "${_comp_dest}" 2>/dev/null && return 0
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "${_comp_dest}" "${_url}" 2>/dev/null && return 0
+    fi
+    warn "Could not download completion file: ${_comp_name}"
+    return 1
+}
+
+COMPLETION_MARKER="# claudesync completions"
+
+install_bash_completions() {
+    _comp_dir="${HOME}/.local/share/claudesync/completions"
+    _comp_file="${_comp_dir}/claudesync.bash"
+    mkdir -p "${_comp_dir}"
+
+    if _get_completion_file "claudesync.bash" "${_comp_file}"; then
+        _rc="$1"
+        _source_line="source ${_comp_file}  ${COMPLETION_MARKER}"
+        if ! grep -qF "${COMPLETION_MARKER}" "${_rc}" 2>/dev/null; then
+            printf "\n%s\n" "${_source_line}" >> "${_rc}"
+            success "Installed bash completions into ${_rc}"
+        else
+            info "Completion sourcing already present in ${_rc}"
+        fi
+    fi
+}
+
+install_zsh_completions() {
+    _comp_dir="${HOME}/.local/share/claudesync/completions"
+    _comp_file="${_comp_dir}/_claudesync"
+    mkdir -p "${_comp_dir}"
+
+    if _get_completion_file "claudesync.zsh" "${_comp_file}"; then
+        _rc="${HOME}/.zshrc"
+        _fpath_line="fpath=(${_comp_dir} \$fpath)  ${COMPLETION_MARKER}"
+        if ! grep -qF "${COMPLETION_MARKER}" "${_rc}" 2>/dev/null; then
+            # Insert fpath line before any compinit call, or append to end
+            if grep -qF "compinit" "${_rc}" 2>/dev/null; then
+                _tmp_rc="${_rc}.claudesync-comp.tmp"
+                awk -v line="${_fpath_line}" '
+                    !inserted && /compinit/ { print line; inserted=1 }
+                    { print }
+                ' "${_rc}" > "${_tmp_rc}" && mv "${_tmp_rc}" "${_rc}"
+            else
+                printf "\n%s\nautoload -Uz compinit && compinit  %s\n" "${_fpath_line}" "${COMPLETION_MARKER}" >> "${_rc}"
+            fi
+            success "Installed zsh completions into ${_rc}"
+        else
+            info "Completion sourcing already present in ${_rc}"
+        fi
+    fi
+}
+
+install_fish_completions() {
+    _fish_comp_dir="${HOME}/.config/fish/completions"
+    mkdir -p "${_fish_comp_dir}"
+
+    if _get_completion_file "claudesync.fish" "${_fish_comp_dir}/claudesync.fish"; then
+        success "Installed fish completions into ${_fish_comp_dir}/claudesync.fish"
+    fi
+}
+
+info "Installing shell completions..."
+case "${USER_SHELL}" in
+    fish)
+        install_fish_completions
+        ;;
+    zsh)
+        install_zsh_completions
+        ;;
+    *)
+        install_bash_completions "${HOME}/.bashrc"
+        ;;
+esac
+
+# ---------------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------------
 printf "\n%b" "${BOLD}"
@@ -575,5 +669,7 @@ esac
 printf "\n  Then use claudesync as you would the CLI:\n"
 printf "    claudesync --help\n"
 printf "    claudesync export --org <id> --conversation <id>\n"
+printf "\n  Shell completions have been installed. Press <TAB> to complete\n"
+printf "  subcommands and flags.\n"
 printf "\n  Files written by export commands land in the current directory\n"
 printf "  (mounted as /data inside the container).\n\n"

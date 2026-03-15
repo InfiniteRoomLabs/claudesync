@@ -64,8 +64,16 @@ All notable changes to this project will be documented in this file.
 - Live-tested: successfully exported a conversation with artifacts to a 2-commit git repo
 
 ### Fixed
+- Dockerfile CLI target: WORKDIR changed to /data so exports write to mounted volume, not /app
 - Dockerfile: add `--legacy` flag to `pnpm deploy` for pnpm v10 compatibility
 - Docker image builds and runs successfully (385MB, node:24-slim)
+
+### Added (Shell Completions)
+- `scripts/completions/claudesync.bash` -- Bash completion for subcommands and flags
+- `scripts/completions/claudesync.zsh` -- Zsh completion with _arguments style
+- `scripts/completions/claudesync.fish` -- Fish completion with subcommand gating
+- PowerShell completion via Register-ArgumentCompleter (embedded in install.ps1)
+- All installers auto-install completions; uninstallers clean them up
 - Zod schemas now accept `null` for `current_leaf_message_uuid`, `enabled_web_search`, `enabled_mcp_tools`, `docs_count`, `files_count` (discovered via live API testing against 1,375 conversations)
 
 ### Changed

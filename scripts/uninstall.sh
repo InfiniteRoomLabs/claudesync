@@ -181,6 +181,99 @@ case "${USER_SHELL}" in
 esac
 
 # ---------------------------------------------------------------------------
+# Remove shell completion files
+# ---------------------------------------------------------------------------
+COMPLETION_MARKER="# claudesync completions"
+
+remove_bash_completions() {
+    _comp_dir="${HOME}/.local/share/claudesync/completions"
+    if [ -d "${_comp_dir}" ]; then
+        rm -rf "${_comp_dir}"
+        success "Removed completions directory: ${_comp_dir}"
+        REMOVED="${REMOVED}  - ${_comp_dir}\n"
+    fi
+
+    # Remove the parent directory if empty
+    _parent="${HOME}/.local/share/claudesync"
+    if [ -d "${_parent}" ]; then
+        rmdir "${_parent}" 2>/dev/null && \
+            success "Removed empty directory: ${_parent}" || true
+    fi
+
+    # Remove the source line from .bashrc
+    _rc="${HOME}/.bashrc"
+    if grep -qF "${COMPLETION_MARKER}" "${_rc}" 2>/dev/null; then
+        _tmp_rc="${_rc}.claudesync-comp.tmp"
+        grep -vF "${COMPLETION_MARKER}" "${_rc}" > "${_tmp_rc}" && mv "${_tmp_rc}" "${_rc}"
+        success "Removed completion sourcing from ${_rc}"
+        REMOVED="${REMOVED}  - completion source line from ${_rc}\n"
+    fi
+}
+
+remove_zsh_completions() {
+    _comp_dir="${HOME}/.local/share/claudesync/completions"
+    if [ -d "${_comp_dir}" ]; then
+        rm -rf "${_comp_dir}"
+        success "Removed completions directory: ${_comp_dir}"
+        REMOVED="${REMOVED}  - ${_comp_dir}\n"
+    fi
+
+    # Remove the parent directory if empty
+    _parent="${HOME}/.local/share/claudesync"
+    if [ -d "${_parent}" ]; then
+        rmdir "${_parent}" 2>/dev/null && \
+            success "Removed empty directory: ${_parent}" || true
+    fi
+
+    # Remove the fpath/compinit lines from .zshrc
+    _rc="${HOME}/.zshrc"
+    if grep -qF "${COMPLETION_MARKER}" "${_rc}" 2>/dev/null; then
+        _tmp_rc="${_rc}.claudesync-comp.tmp"
+        grep -vF "${COMPLETION_MARKER}" "${_rc}" > "${_tmp_rc}" && mv "${_tmp_rc}" "${_rc}"
+        success "Removed completion sourcing from ${_rc}"
+        REMOVED="${REMOVED}  - completion lines from ${_rc}\n"
+    fi
+}
+
+remove_fish_completions() {
+    _fish_comp="${HOME}/.config/fish/completions/claudesync.fish"
+    if [ -f "${_fish_comp}" ]; then
+        rm -f "${_fish_comp}"
+        success "Removed ${_fish_comp}"
+        REMOVED="${REMOVED}  - ${_fish_comp}\n"
+    fi
+}
+
+info "Removing shell completions..."
+case "${USER_SHELL}" in
+    fish)
+        remove_fish_completions
+        ;;
+    zsh)
+        remove_zsh_completions
+        ;;
+    *)
+        remove_bash_completions
+        ;;
+esac
+
+# Also check non-primary shells
+case "${USER_SHELL}" in
+    bash)
+        remove_fish_completions
+        remove_zsh_completions
+        ;;
+    zsh)
+        remove_fish_completions
+        remove_bash_completions
+        ;;
+    fish)
+        remove_bash_completions
+        remove_zsh_completions
+        ;;
+esac
+
+# ---------------------------------------------------------------------------
 # Remove MCP wrapper script
 # ---------------------------------------------------------------------------
 WRAPPER_PATH="${HOME}/.local/bin/claudesync-mcp"

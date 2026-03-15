@@ -83,7 +83,37 @@ else {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Remove MCP wrapper files
+# 2. Remove tab completion (Register-ArgumentCompleter block)
+# ---------------------------------------------------------------------------
+Write-Info "Checking for tab completion in $PROFILE ..."
+
+if (Test-Path $PROFILE) {
+    $profileContent = Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue
+    $completionMarker = "# claudesync tab completion"
+
+    if ($profileContent -and $profileContent.Contains($completionMarker)) {
+        # Match the entire completion block: from the marker comment through the
+        # closing brace of the Register-ArgumentCompleter script block.
+        $compPattern = [regex]::Escape($completionMarker) + '[\s\S]*?Register-ArgumentCompleter\s+-CommandName\s+claudesync\s+-ScriptBlock\s+\{[\s\S]*?\n\}\s*'
+        $newContent = [regex]::Replace($profileContent, $compPattern, '')
+
+        # Clean up double blank lines
+        while ($newContent.Contains("`n`n`n")) {
+            $newContent = $newContent.Replace("`n`n`n", "`n`n")
+        }
+
+        Set-Content -Path $PROFILE -Value $newContent -NoNewline
+        Write-Success "Removed tab completion block from $PROFILE"
+        $removed += "Tab completion ($PROFILE)"
+    }
+    else {
+        Write-Info "No tab completion block found in $PROFILE."
+        $skipped += "Tab completion (not found)"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 3. Remove MCP wrapper files
 # ---------------------------------------------------------------------------
 $wrapperDir = Join-Path $env:LOCALAPPDATA "claudesync"
 $wrapperPs1 = Join-Path $wrapperDir "claudesync-mcp.ps1"
@@ -126,7 +156,7 @@ if (Test-Path $wrapperDir) {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Remove claudesync directory from user PATH
+# 4. Remove claudesync directory from user PATH
 # ---------------------------------------------------------------------------
 Write-Info "Checking user PATH for $wrapperDir ..."
 
@@ -159,7 +189,7 @@ catch {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Optionally remove Docker images
+# 5. Optionally remove Docker images
 # ---------------------------------------------------------------------------
 $dockerImages = @("deathnerd/claudesync:latest", "deathnerd/claudesync-mcp:latest")
 $hasDocker = Get-Command docker -ErrorAction SilentlyContinue
@@ -219,7 +249,7 @@ else {
 }
 
 # ---------------------------------------------------------------------------
-# 5. MCP config -- print manual instructions (do NOT auto-edit)
+# 6. MCP config -- print manual instructions (do NOT auto-edit)
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "  MCP Configuration" -ForegroundColor White
