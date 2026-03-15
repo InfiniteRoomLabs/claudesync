@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import type { ConversationSummary } from "@claudesync/core";
-import { createClient, resolveOrgId, truncate } from "../utils.js";
+import { createClient, resolveOrgId, truncate, outputJson } from "../utils.js";
 
 export const lsCommand = new Command("ls")
   .description("List conversations")
@@ -8,11 +8,13 @@ export const lsCommand = new Command("ls")
   .option("--limit <n>", "Max conversations to show", "20")
   .option("--starred", "Show only starred conversations")
   .option("--json", "Output as JSON instead of table")
+  .option("--query <expression>", "JMESPath query to filter JSON output (implies --json)")
   .action(async (options: {
     org?: string;
     limit: string;
     starred?: boolean;
     json?: boolean;
+    query?: string;
   }) => {
     const { auth, client } = createClient();
     const orgId = await resolveOrgId(auth, options.org);
@@ -29,8 +31,8 @@ export const lsCommand = new Command("ls")
       }
     }
 
-    if (options.json) {
-      console.log(JSON.stringify(conversations, null, 2));
+    if (options.json || options.query) {
+      outputJson(conversations, options.query);
       return;
     }
 

@@ -7,7 +7,7 @@ import {
   exportToGit,
 } from "@claudesync/core";
 import type { GitBundleCommit } from "@claudesync/core";
-import { createClient, resolveOrgId, truncate } from "../utils.js";
+import { createClient, resolveOrgId, truncate, outputJson } from "../utils.js";
 
 export const projectsCommand = new Command("projects")
   .description("List and export projects");
@@ -18,14 +18,15 @@ projectsCommand
   .description("List projects")
   .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
   .option("--json", "Output as JSON instead of table")
-  .action(async (options: { org?: string; json?: boolean }) => {
+  .option("--query <expression>", "JMESPath query to filter JSON output (implies --json)")
+  .action(async (options: { org?: string; json?: boolean; query?: string }) => {
     const { auth, client } = createClient();
     const orgId = await resolveOrgId(auth, options.org);
 
     const projects = await client.listProjects(orgId);
 
-    if (options.json) {
-      console.log(JSON.stringify(projects, null, 2));
+    if (options.json || options.query) {
+      outputJson(projects, options.query);
       return;
     }
 

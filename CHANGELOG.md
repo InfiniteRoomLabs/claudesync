@@ -26,6 +26,13 @@ All notable changes to this project will be documented in this file.
 - Consolidated design review (`docs/spike-results/design-review.md`)
 - Sprint architecture and task documents
 
+### Added (CLI)
+- `--query` flag on all commands with `--json` output (JMESPath filtering, AWS CLI style)
+  - `claudesync ls --query "[].{uuid: uuid, name: name}"`
+  - `claudesync projects list --query "[].name"`
+  - `claudesync search kotlin --query "chunks[].extras.conversation_uuid"`
+  - `--query` implies `--json` automatically
+
 ### Improved
 - `claudesync projects list` now shows UUIDs for easy copy-paste into `projects export`
 - `claudesync ls` and `projects list` show export hint at the bottom

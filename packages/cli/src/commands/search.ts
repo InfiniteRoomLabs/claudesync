@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { createClient, resolveOrgId, truncate } from "../utils.js";
+import { createClient, resolveOrgId, truncate, outputJson } from "../utils.js";
 
 export const searchCommand = new Command("search")
   .description("Search conversations")
@@ -7,12 +7,14 @@ export const searchCommand = new Command("search")
   .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
   .option("--limit <n>", "Max results to show", "10")
   .option("--json", "Output as JSON instead of table")
+  .option("--query <expression>", "JMESPath query to filter JSON output (implies --json)")
   .action(async (
     query: string,
     options: {
       org?: string;
       limit: string;
       json?: boolean;
+      query?: string;
     }
   ) => {
     const { auth, client } = createClient();
@@ -21,8 +23,8 @@ export const searchCommand = new Command("search")
 
     const results = await client.searchConversations(orgId, query, limit);
 
-    if (options.json) {
-      console.log(JSON.stringify(results, null, 2));
+    if (options.json || options.query) {
+      outputJson(results, options.query);
       return;
     }
 
