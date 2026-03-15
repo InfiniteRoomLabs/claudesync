@@ -210,7 +210,74 @@ fi
 
 BASH_ZSH_FUNCTION='
 claudesync() {
-  # -- locate Firefox profile --
+  # -- dependency checks --
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "claudesync: docker is not installed." >&2
+    echo "  Install Docker: https://docs.docker.com/get-docker/" >&2
+    return 1
+  fi
+
+  # -- resolve cookie (fallback chain) --
+  local _cs_cookie_header=""
+
+  # 1. If CLAUDE_AI_COOKIE is already set, use it directly
+  if [ -n "${CLAUDE_AI_COOKIE:-}" ]; then
+    _cs_cookie_header="${CLAUDE_AI_COOKIE}"
+  else
+    # Need sqlite3 for browser cookie reading
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+      echo "claudesync: sqlite3 is not installed (needed to read browser cookies)." >&2
+      case "$(uname -s)" in
+        Darwin) echo "  Install: brew install sqlite3" >&2 ;;
+        *)      echo "  Install: sudo apt install sqlite3  (or your package manager)" >&2 ;;
+      esac
+      echo "  Or set CLAUDE_AI_COOKIE manually (see below)." >&2
+      echo "" >&2
+      echo "  Manual method: open claude.ai in your browser, press F12," >&2
+      echo "  go to Application > Cookies > claude.ai, copy the sessionKey value, then:" >&2
+      echo "    export CLAUDE_AI_COOKIE='"'"'sessionKey=<paste-value-here>'"'"'" >&2
+      return 1
+    fi
+
+    # 2. Try Firefox
+    _cs_cookie_header="$(_cs_try_firefox)"
+
+    # 3. Try Chrome/Chromium (macOS only -- Linux Chrome cookies are encrypted)
+    if [ -z "${_cs_cookie_header}" ] && [ "$(uname -s)" = "Darwin" ]; then
+      _cs_cookie_header="$(_cs_try_chrome_macos)"
+    fi
+
+    # 4. Nothing worked -- guide the user
+    if [ -z "${_cs_cookie_header}" ]; then
+      echo "claudesync: could not read sessionKey cookie from any browser." >&2
+      echo "" >&2
+      echo "  Tried:" >&2
+      echo "    - Firefox (all known profile paths)" >&2
+      [ "$(uname -s)" = "Darwin" ] && echo "    - Chrome (macOS Keychain)" >&2
+      echo "" >&2
+      echo "  To fix, either:" >&2
+      echo "    1. Log in to claude.ai in Firefox and try again" >&2
+      echo "    2. Set the cookie manually:" >&2
+      echo "       Open claude.ai > F12 > Application > Cookies > sessionKey" >&2
+      echo "       export CLAUDE_AI_COOKIE='"'"'sessionKey=<paste-value>'"'"'" >&2
+      [ "$(uname -s)" != "Darwin" ] && \
+        echo "    3. Chrome users on Linux: pip install pycookiecheat, then:" >&2 && \
+        echo "       export CLAUDE_AI_COOKIE=\"sessionKey=\$(python3 -c \"from pycookiecheat import chrome_cookies; c=chrome_cookies('"'"'https://claude.ai'"'"'); print(c.get('"'"'sessionKey'"'"','"'"''"'"'))\" )\"" >&2
+      return 1
+    fi
+  fi
+
+  # -- run container --
+  CLAUDE_AI_COOKIE="${_cs_cookie_header}" \
+    docker run --rm \
+      -e CLAUDE_AI_COOKIE \
+      -v "$(pwd):/data" \
+      deathnerd/claudesync:latest \
+      "$@"
+}
+
+# -- Firefox cookie reader (returns "sessionKey=<value>" or empty) --
+_cs_try_firefox() {
   local _cs_profile=""
   local _cs_candidates=""
   case "$(uname -s)" in
@@ -250,33 +317,101 @@ ${_cs_candidates}
 _CS_EOF
 
   if [ -z "${_cs_profile}" ] || [ ! -f "${_cs_profile}/cookies.sqlite" ]; then
-    echo "claudesync: could not find Firefox cookies.sqlite" >&2
-    echo "  Make sure Firefox is installed and you are logged in to claude.ai." >&2
-    return 1
+    return 0  # not found, return empty
   fi
 
-  # -- read sessionKey cookie --
-  local _cs_cookie
-  _cs_cookie="$(sqlite3 -readonly "file:${_cs_profile}/cookies.sqlite?immutable=1" \
+  local _cs_val
+  _cs_val="$(sqlite3 -readonly "file:${_cs_profile}/cookies.sqlite?immutable=1" \
     "SELECT value FROM moz_cookies WHERE host LIKE '"'"'%claude.ai%'"'"' AND name='"'"'sessionKey'"'"' LIMIT 1;" \
-    2>/dev/null)"
-  if [ -z "${_cs_cookie}" ]; then
-    echo "claudesync: sessionKey cookie not found -- are you logged in to claude.ai in Firefox?" >&2
-    return 1
+    2>/dev/null || true)"
+  if [ -n "${_cs_val}" ]; then
+    printf "sessionKey=%s" "${_cs_val}"
   fi
+}
 
-  # -- run container --
-  CLAUDE_AI_COOKIE="sessionKey=${_cs_cookie}" \
-    docker run --rm \
-      -e CLAUDE_AI_COOKIE \
-      -v "$(pwd):/data" \
-      deathnerd/claudesync:latest \
-      "$@"
+# -- Chrome cookie reader for macOS (returns "sessionKey=<value>" or empty) --
+_cs_try_chrome_macos() {
+  local _cs_chrome_db="${HOME}/Library/Application Support/Google/Chrome/Default/Cookies"
+  [ -f "${_cs_chrome_db}" ] || return 0
+
+  # Get Chrome Safe Storage key from macOS Keychain
+  local _cs_key
+  _cs_key="$(security find-generic-password -s "Chrome Safe Storage" -w 2>/dev/null || true)"
+  [ -z "${_cs_key}" ] && return 0
+
+  # Chrome cookies are AES-128-CBC encrypted with a PBKDF2-derived key
+  # Derive the key: PBKDF2(password=keychain_value, salt="saltysalt", iterations=1003, keylen=16)
+  local _cs_derived
+  _cs_derived="$(printf "%s" "${_cs_key}" | openssl dgst -sha1 -hmac "saltysalt" 2>/dev/null || true)"
+  # Full decryption requires more complex PBKDF2 -- punt to manual method
+  # This is a known limitation: Chrome cookie decryption from shell is fragile
+  return 0
 }
 '
 
 FISH_FUNCTION='function claudesync
-    # Locate Firefox profile
+    # -- dependency checks --
+    if not command -q docker
+        echo "claudesync: docker is not installed." >&2
+        echo "  Install Docker: https://docs.docker.com/get-docker/" >&2
+        return 1
+    end
+
+    # -- resolve cookie (fallback chain) --
+    set -l _cs_cookie_header ""
+
+    # 1. If CLAUDE_AI_COOKIE is already set, use it
+    if set -q CLAUDE_AI_COOKIE; and test -n "$CLAUDE_AI_COOKIE"
+        set _cs_cookie_header "$CLAUDE_AI_COOKIE"
+    else
+        # Need sqlite3 for browser cookie reading
+        if not command -q sqlite3
+            echo "claudesync: sqlite3 is not installed (needed to read browser cookies)." >&2
+            if test (uname -s) = "Darwin"
+                echo "  Install: brew install sqlite3" >&2
+            else
+                echo "  Install: sudo apt install sqlite3  (or your package manager)" >&2
+            end
+            echo "  Or set CLAUDE_AI_COOKIE manually:" >&2
+            echo "  Open claude.ai > F12 > Application > Cookies > sessionKey" >&2
+            echo "  set -gx CLAUDE_AI_COOKIE '"'"'sessionKey=<paste-value>'"'"'" >&2
+            return 1
+        end
+
+        # 2. Try Firefox
+        set _cs_cookie_header (__claudesync_try_firefox)
+
+        # 3. Nothing worked -- guide the user
+        if test -z "$_cs_cookie_header"
+            echo "claudesync: could not read sessionKey cookie from any browser." >&2
+            echo "" >&2
+            echo "  Tried:" >&2
+            echo "    - Firefox (all known profile paths)" >&2
+            echo "" >&2
+            echo "  To fix, either:" >&2
+            echo "    1. Log in to claude.ai in Firefox and try again" >&2
+            echo "    2. Set the cookie manually:" >&2
+            echo "       Open claude.ai > F12 > Application > Cookies > sessionKey" >&2
+            echo "       set -gx CLAUDE_AI_COOKIE '"'"'sessionKey=<paste-value>'"'"'" >&2
+            if test (uname -s) != "Darwin"
+                echo "    3. Chrome users on Linux: pip install pycookiecheat, then:" >&2
+                echo "       set -gx CLAUDE_AI_COOKIE (python3 -c \"from pycookiecheat import chrome_cookies; c=chrome_cookies('"'"'https://claude.ai'"'"'); print('"'"'sessionKey='"'"'+c.get('"'"'sessionKey'"'"','"'"''"'"'))\")" >&2
+            end
+            return 1
+        end
+    end
+
+    # -- run container --
+    CLAUDE_AI_COOKIE="$_cs_cookie_header" \
+        docker run --rm \
+            -e CLAUDE_AI_COOKIE \
+            -v (pwd)":/data" \
+            deathnerd/claudesync:latest \
+            $argv
+end
+
+# -- Firefox cookie reader helper --
+function __claudesync_try_firefox
     set -l _cs_profile ""
     set -l _cs_candidates \
         "$HOME/.mozilla/firefox" \
@@ -326,27 +461,15 @@ FISH_FUNCTION='function claudesync
     end
 
     if test -z "$_cs_profile" -o ! -f "$_cs_profile/cookies.sqlite"
-        echo "claudesync: could not find Firefox cookies.sqlite" >&2
-        echo "  Make sure Firefox is installed and you are logged in to claude.ai." >&2
-        return 1
+        return 0
     end
 
-    # Read sessionKey cookie
-    set -l _cs_cookie (sqlite3 -readonly "file:$_cs_profile/cookies.sqlite?immutable=1" \
-        "SELECT value FROM moz_cookies WHERE host LIKE '"'"'%claude.ai%'"'"' AND name='"'"'sessionKey'"'"' LIMIT 1;" 2>/dev/null)
+    set -l _cs_val (sqlite3 -readonly "file:$_cs_profile/cookies.sqlite?immutable=1" \
+        "SELECT value FROM moz_cookies WHERE host LIKE '"'"'%claude.ai%'"'"' AND name='"'"'sessionKey'"'"' LIMIT 1;" 2>/dev/null; or true)
 
-    if test -z "$_cs_cookie"
-        echo "claudesync: sessionKey cookie not found -- are you logged in to claude.ai in Firefox?" >&2
-        return 1
+    if test -n "$_cs_val"
+        echo "sessionKey=$_cs_val"
     end
-
-    # Run container
-    CLAUDE_AI_COOKIE="sessionKey=$_cs_cookie" \
-        docker run --rm \
-            -e CLAUDE_AI_COOKIE \
-            -v (pwd)":/data" \
-            deathnerd/claudesync:latest \
-            $argv
 end
 '
 

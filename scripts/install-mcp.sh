@@ -196,68 +196,84 @@ create_wrapper() {
 
     cat > "${WRAPPER_PATH}" << 'WRAPPER_EOF'
 #!/bin/sh
-# claudesync-mcp wrapper -- reads Firefox sessionKey and runs the MCP container
+# claudesync-mcp wrapper -- reads browser cookie and runs the MCP container
 # Installed by: https://github.com/InfiniteRoomLabs/claudesync
 set -eu
 
-# Locate Firefox profile
-_cs_profile=""
-case "$(uname -s)" in
-  Darwin)
-    _cs_candidates="${HOME}/Library/Application Support/Firefox/Profiles"
-    ;;
-  *)
-    _cs_candidates="${HOME}/.mozilla/firefox
+_mcp_error() {
+  printf '{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"claudesync-mcp: %s"}}' "$1" >&2
+  exit 1
+}
+
+# -- dependency checks --
+command -v docker >/dev/null 2>&1 || _mcp_error "docker not found. Install Docker: https://docs.docker.com/get-docker/"
+
+# -- resolve cookie (fallback chain) --
+_cs_cookie_header=""
+
+# 1. If CLAUDE_AI_COOKIE is already set, use it
+if [ -n "${CLAUDE_AI_COOKIE:-}" ]; then
+  _cs_cookie_header="${CLAUDE_AI_COOKIE}"
+else
+  command -v sqlite3 >/dev/null 2>&1 || _mcp_error "sqlite3 not found. Install sqlite3 (apt install sqlite3 / brew install sqlite3), or set CLAUDE_AI_COOKIE env var."
+
+  # 2. Try Firefox
+  _cs_profile=""
+  case "$(uname -s)" in
+    Darwin)
+      _cs_candidates="${HOME}/Library/Application Support/Firefox/Profiles"
+      ;;
+    *)
+      _cs_candidates="${HOME}/.mozilla/firefox
 ${HOME}/snap/firefox/common/.mozilla/firefox
 ${HOME}/.var/app/org.mozilla.firefox/.mozilla/firefox"
-    ;;
-esac
+      ;;
+  esac
 
-IFS='
+  IFS='
 '
-for _cs_base in ${_cs_candidates}; do
-  _cs_ini="${_cs_base}/profiles.ini"
-  if [ -f "${_cs_ini}" ]; then
-    _cs_cur="" _cs_def=0 _cs_found=""
-    while IFS= read -r _cs_line; do
-      case "${_cs_line}" in
-        \[*)
-          [ "${_cs_def}" = "1" ] && [ -n "${_cs_cur}" ] && { _cs_found="${_cs_cur}"; break; }
-          _cs_def=0; _cs_cur=""
-          ;;
-        Default=1*) _cs_def=1 ;;
-        Path=*) _cs_cur="${_cs_line#Path=}" ;;
-      esac
-    done < "${_cs_ini}"
-    [ -z "${_cs_found}" ] && [ "${_cs_def}" = "1" ] && _cs_found="${_cs_cur}"
-    if [ -n "${_cs_found}" ]; then
-      case "${_cs_found}" in
-        /*) _cs_profile="${_cs_found}" ;;
-        *)  _cs_profile="${_cs_base}/${_cs_found}" ;;
-      esac
-      [ -d "${_cs_profile}" ] && break
-      _cs_profile=""
+  for _cs_base in ${_cs_candidates}; do
+    _cs_ini="${_cs_base}/profiles.ini"
+    if [ -f "${_cs_ini}" ]; then
+      _cs_cur="" _cs_def=0 _cs_found=""
+      while IFS= read -r _cs_line; do
+        case "${_cs_line}" in
+          \[*)
+            [ "${_cs_def}" = "1" ] && [ -n "${_cs_cur}" ] && { _cs_found="${_cs_cur}"; break; }
+            _cs_def=0; _cs_cur=""
+            ;;
+          Default=1*) _cs_def=1 ;;
+          Path=*) _cs_cur="${_cs_line#Path=}" ;;
+        esac
+      done < "${_cs_ini}"
+      [ -z "${_cs_found}" ] && [ "${_cs_def}" = "1" ] && _cs_found="${_cs_cur}"
+      if [ -n "${_cs_found}" ]; then
+        case "${_cs_found}" in
+          /*) _cs_profile="${_cs_found}" ;;
+          *)  _cs_profile="${_cs_base}/${_cs_found}" ;;
+        esac
+        [ -d "${_cs_profile}" ] && break
+        _cs_profile=""
+      fi
     fi
+  done
+  unset IFS
+
+  if [ -n "${_cs_profile}" ] && [ -f "${_cs_profile}/cookies.sqlite" ]; then
+    _cs_val="$(sqlite3 -readonly "file:${_cs_profile}/cookies.sqlite?immutable=1" \
+      "SELECT value FROM moz_cookies WHERE host LIKE '%claude.ai%' AND name='sessionKey' LIMIT 1;" \
+      2>/dev/null || true)"
+    [ -n "${_cs_val}" ] && _cs_cookie_header="sessionKey=${_cs_val}"
   fi
-done
-unset IFS
 
-if [ -z "${_cs_profile}" ] || [ ! -f "${_cs_profile}/cookies.sqlite" ]; then
-  echo '{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"claudesync-mcp: Firefox cookies.sqlite not found. Log in to claude.ai in Firefox."}}' >&2
-  exit 1
-fi
-
-_cs_cookie="$(sqlite3 -readonly "file:${_cs_profile}/cookies.sqlite?immutable=1" \
-  "SELECT value FROM moz_cookies WHERE host LIKE '%claude.ai%' AND name='sessionKey' LIMIT 1;" \
-  2>/dev/null || true)"
-
-if [ -z "${_cs_cookie}" ]; then
-  echo '{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"claudesync-mcp: sessionKey cookie not found. Are you logged in to claude.ai in Firefox?"}}' >&2
-  exit 1
+  # 3. Nothing worked
+  if [ -z "${_cs_cookie_header}" ]; then
+    _mcp_error "Could not read sessionKey from Firefox. Log in to claude.ai in Firefox, or set CLAUDE_AI_COOKIE='sessionKey=<value>' (get value from F12 > Application > Cookies)."
+  fi
 fi
 
 exec docker run --rm -i \
-  -e "CLAUDE_AI_COOKIE=sessionKey=${_cs_cookie}" \
+  -e "CLAUDE_AI_COOKIE=${_cs_cookie_header}" \
   deathnerd/claudesync-mcp:latest
 WRAPPER_EOF
 

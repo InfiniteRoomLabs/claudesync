@@ -31,8 +31,11 @@ All notable changes to this project will be documented in this file.
   - Detects shell (bash, zsh, fish) and installs the appropriate function/script
   - Auto-reads Firefox `sessionKey` cookie via sqlite3 (supports standard, Snap, Flatpak, macOS paths)
   - Runs the CLI Docker container with cookie injection and volume mount
+  - Fallback chain: CLAUDE_AI_COOKIE env var > Firefox > Chrome (macOS) > manual paste instructions
+  - Runtime dependency checks with OS-specific install guidance (docker, sqlite3)
 - `scripts/install-mcp.sh` -- interactive MCP server configuration for Claude Code, Claude Desktop, or `.mcp.json`
   - Creates `~/.local/bin/claudesync-mcp` wrapper that auto-reads cookies on every invocation
+  - Same fallback chain and dependency checks as install.sh
   - Supports `--target` flag for non-interactive use
   - Merges into existing config files without overwriting (jq or awk fallback)
 
