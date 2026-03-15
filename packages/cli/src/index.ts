@@ -11,12 +11,23 @@ const program = new Command();
 program
   .name("claudesync")
   .description("ClaudeSync -- Export claude.ai conversations as git repositories")
-  .version("0.2.1");
+  .version("0.3.0");
 
 program.addCommand(lsCommand);
 program.addCommand(exportCommand);
 program.addCommand(projectsCommand);
 program.addCommand(searchCommand);
+
+// TUI subcommand
+program
+  .command("tui")
+  .description("Launch interactive browser (Miller Columns)")
+  .action(async () => {
+    const { render } = await import("ink");
+    const { createElement } = await import("react");
+    const { App } = await import("./tui/App.js");
+    render(createElement(App));
+  });
 
 // Global error handling
 program.hook("preAction", () => {
@@ -50,14 +61,4 @@ function handleError(error: unknown): void {
   process.exit(1);
 }
 
-// If no subcommand given and we have a TTY, launch interactive TUI
-if (process.argv.length <= 2 && process.stdin.isTTY) {
-  import("ink").then(async ({ render }) => {
-    const { createElement } = await import("react");
-    const { App } = await import("./tui/App.js");
-    render(createElement(App));
-  }).catch(handleError);
-} else {
-  // Show help if no args and no TTY, otherwise parse subcommand
-  program.parseAsync(process.argv).catch(handleError);
-}
+program.parseAsync(process.argv).catch(handleError);

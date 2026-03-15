@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-03-15
+
+### Changed
+- TUI is now `claudesync tui` subcommand (was auto-launch on no args, unreliable across npx/Docker)
+
 ## [0.3.0] - 2026-03-15
 
 ### Added
