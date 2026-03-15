@@ -99,12 +99,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
-      - name: Publish @claudesync/core
-        run: pnpm --filter @claudesync/core publish --no-git-checks --access public
+      - name: Publish @infinite-room-labs/claudesync-core
+        run: pnpm --filter @infinite-room-labs/claudesync-core publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @claudesync/mcp-server
-        run: pnpm --filter @claudesync/mcp-server publish --no-git-checks --access public
+      - name: Publish @infinite-room-labs/claudesync-mcp-server
+        run: pnpm --filter @infinite-room-labs/claudesync-mcp-server publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

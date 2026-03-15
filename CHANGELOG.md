@@ -5,8 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- `@claudesync/core` SDK with Zod schemas, auth module, HTTP client, message tree utilities (44 tests passing)
-- `@claudesync/mcp-server` with 4 MCP tools: list_organizations, list_conversations, get_conversation, search_conversations
+- `@infinite-room-labs/claudesync-core` SDK with Zod schemas, auth module, HTTP client, message tree utilities (44 tests passing)
+- `@infinite-room-labs/claudesync-mcp-server` with 4 MCP tools: list_organizations, list_conversations, get_conversation, search_conversations
 - Zod schemas for 12 API response types with `.passthrough()` for forward compatibility
 - `EnvAuth` with security hardening (clears cookie from process.env after reading)
 - `ClaudeSyncClient` with configurable rate limiting (300ms default), defensive search double-parse
@@ -102,8 +102,8 @@ All notable changes to this project will be documented in this file.
 - Implementation plan rewritten: Bun replaced with Node.js v24 LTS / pnpm / Vitest
 - Phase reorder: MCP server first (Phase 1), extension deferred (Phase 4)
 - `tsconfig.base.json`: `moduleResolution` changed from `bundler` to `NodeNext`
-- `@claudesync/core` package.json: added `build` script, `exports` pointing to `dist/`
-- `@claudesync/mcp-server` package.json: added `build` script, `bin` pointing to `dist/`
+- `@infinite-room-labs/claudesync-core` package.json: added `build` script, `exports` pointing to `dist/`
+- `@infinite-room-labs/claudesync-mcp-server` package.json: added `build` script, `bin` pointing to `dist/`
 - Root `package.json`: `engines.node` changed to `>=24.0.0`, added `engines.pnpm`
 - `.gitignore`: added `.env`, `node_modules/`, `dist/`, coverage, IDE files
 - `CLAUDE.md`: updated to reflect completed spike and Phase 1 status

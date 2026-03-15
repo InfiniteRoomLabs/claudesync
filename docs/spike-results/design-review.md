@@ -68,7 +68,7 @@ Returns `Promise<ConversationSummary[]>` but the API dumps 1,375+ conversations 
 
 | # | Finding | Fix |
 |---|---------|-----|
-| 15 | No `build` script in `@claudesync/core` | Add `tsc -p tsconfig.json`; core's exports point at `./src/index.ts` (won't work in Docker/npm) |
+| 15 | No `build` script in `@infinite-room-labs/claudesync-core` | Add `tsc -p tsconfig.json`; core's exports point at `./src/index.ts` (won't work in Docker/npm) |
 | 16 | `bin` in mcp-server points at TypeScript source | Change to `./dist/index.js` before publishing |
 | 17 | `moduleResolution: bundler` won't work with plain `tsc` | Change to `NodeNext` with `"module": "NodeNext"` -- requires `.js` extensions on imports |
 | 18 | Node.js v25 is not LTS (odd release) | Test v24 LTS against claude.ai; use v24 if TLS check passes |
@@ -108,7 +108,7 @@ Returns `Promise<ConversationSummary[]>` but the API dumps 1,375+ conversations 
 
 ### Dockerfile (DevOps)
 
-Three-stage build: **deps** (install + native compile) -> **builder** (tsc) -> **runtime** (slim, production only). Use `node:25-slim` (not alpine -- `better-sqlite3` needs glibc). Only containerize `@claudesync/mcp-server`.
+Three-stage build: **deps** (install + native compile) -> **builder** (tsc) -> **runtime** (slim, production only). Use `node:25-slim` (not alpine -- `better-sqlite3` needs glibc). Only containerize `@infinite-room-labs/claudesync-mcp-server`.
 
 ### CI Pipeline (DevOps)
 

@@ -14,19 +14,19 @@ ClaudeSync is a TypeScript monorepo wrapping the undocumented claude.ai web API.
 
 Three-layer design:
 
-1. **@claudesync/core** -- TypeScript SDK handling auth, HTTP client, and data models
+1. **@infinite-room-labs/claudesync-core** -- TypeScript SDK handling auth, HTTP client, and data models
 2. **Consumers** -- Thin shells (MCP server, CLI, extension) that import core
 3. **claude.ai Web API** -- Undocumented HTTP API using cookie-based auth
 
 ```mermaid
 graph TB
     subgraph "Consumers (thin shells)"
-        MCP["@claudesync/mcp-server<br/>(MCP stdio transport)"]
-        CLI["@claudesync/cli<br/>(stub)"]
-        EXT["@claudesync/firefox-extension<br/>(stub)"]
+        MCP["@infinite-room-labs/claudesync-mcp-server<br/>(MCP stdio transport)"]
+        CLI["@infinite-room-labs/claudesync-cli<br/>(stub)"]
+        EXT["@infinite-room-labs/claudesync-firefox-extension<br/>(stub)"]
     end
 
-    subgraph "@claudesync/core"
+    subgraph "@infinite-room-labs/claudesync-core"
         AUTH["Auth Module<br/>EnvAuth / FirefoxProfileAuth"]
         CLIENT["API Client<br/>fetch-based HTTP"]
         MODELS["Data Models<br/>TypeScript types + Zod schemas"]
@@ -59,7 +59,7 @@ graph TB
 ```
 claudesync/
 ├── packages/
-│   ├── core/                    # @claudesync/core
+│   ├── core/                    # @infinite-room-labs/claudesync-core
 │   │   ├── src/
 │   │   │   ├── auth/
 │   │   │   │   ├── types.ts         # AuthProvider interface
@@ -72,14 +72,14 @@ claudesync/
 │   │   │   │   └── types.ts         # Organization, Conversation, etc.
 │   │   │   └── index.ts
 │   │   └── package.json
-│   ├── mcp-server/              # @claudesync/mcp-server
+│   ├── mcp-server/              # @infinite-room-labs/claudesync-mcp-server
 │   │   ├── src/
 │   │   │   ├── server.ts            # MCP server setup + tool registration
 │   │   │   └── index.ts             # Entry point (stdio transport)
 │   │   └── package.json
-│   ├── cli/                     # @claudesync/cli (stub)
+│   ├── cli/                     # @infinite-room-labs/claudesync-cli (stub)
 │   │   └── package.json
-│   └── extension/               # @claudesync/firefox-extension (stub)
+│   └── extension/               # @infinite-room-labs/claudesync-firefox-extension (stub)
 │       └── package.json
 ├── scripts/
 │   └── extract-cookie.ts        # Helper to extract cookie from browser profile

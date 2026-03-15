@@ -4,7 +4,7 @@
 
 **Goal:** Scaffold a pnpm workspace monorepo with a working read-only MCP server that wraps the claude.ai web API, backed by a shared core SDK.
 
-**Architecture:** `@claudesync/core` provides auth (env vars only in Phase 1), an HTTP client (fetch-based) with configurable rate limiting, and Zod-validated data models. `@claudesync/mcp-server` is a thin shell that registers MCP tools (list_organizations, list_conversations, get_conversation) over stdio transport only. CLI and extension packages are stubs.
+**Architecture:** `@infinite-room-labs/claudesync-core` provides auth (env vars only in Phase 1), an HTTP client (fetch-based) with configurable rate limiting, and Zod-validated data models. `@infinite-room-labs/claudesync-mcp-server` is a thin shell that registers MCP tools (list_organizations, list_conversations, get_conversation) over stdio transport only. CLI and extension packages are stubs.
 
 **Tech Stack:** Node.js v24 LTS, pnpm, TypeScript (strict, `NodeNext` module resolution), Zod, Vitest, @modelcontextprotocol/sdk, better-sqlite3 (deferred to Phase 3 for Firefox cookie reading)
 
@@ -105,7 +105,7 @@ Uses `NodeNext` module resolution (not `bundler`) so plain `tsc` works without a
 
 ```json
 {
-  "name": "@claudesync/core",
+  "name": "@infinite-room-labs/claudesync-core",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -150,7 +150,7 @@ Note: `bin` points at compiled JS in `dist/`, not TypeScript source.
 
 ```json
 {
-  "name": "@claudesync/mcp-server",
+  "name": "@infinite-room-labs/claudesync-mcp-server",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -164,7 +164,7 @@ Note: `bin` points at compiled JS in `dist/`, not TypeScript source.
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@claudesync/core": "workspace:*",
+    "@infinite-room-labs/claudesync-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12",
     "zod": "^3.24"
   },
@@ -193,12 +193,12 @@ Note: `bin` points at compiled JS in `dist/`, not TypeScript source.
 `packages/cli/package.json`:
 ```json
 {
-  "name": "@claudesync/cli",
+  "name": "@infinite-room-labs/claudesync-cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@claudesync/core": "workspace:*"
+    "@infinite-room-labs/claudesync-core": "workspace:*"
   }
 }
 ```
@@ -206,7 +206,7 @@ Note: `bin` points at compiled JS in `dist/`, not TypeScript source.
 `packages/extension/package.json`:
 ```json
 {
-  "name": "@claudesync/firefox-extension",
+  "name": "@infinite-room-labs/claudesync-firefox-extension",
   "version": "0.1.0",
   "private": true,
   "type": "module"
@@ -1422,7 +1422,7 @@ git commit -m "feat(core): add barrel export for public API (Phase 1 -- EnvAuth 
 - Create: `packages/mcp-server/src/server.ts`
 - Create: `packages/mcp-server/src/index.ts`
 
-**Context:** The MCP server uses `@modelcontextprotocol/sdk` with stdio transport only. It registers three tools that delegate to `ClaudeSyncClient` from `@claudesync/core`. Auth is `EnvAuth` only in Phase 1.
+**Context:** The MCP server uses `@modelcontextprotocol/sdk` with stdio transport only. It registers three tools that delegate to `ClaudeSyncClient` from `@infinite-room-labs/claudesync-core`. Auth is `EnvAuth` only in Phase 1.
 
 **Security requirement:** stdio transport ONLY. Network transports (SSE, HTTP) expose the session cookie to any network client and are explicitly unsafe. Document this in the server startup banner.
 
@@ -1437,8 +1437,8 @@ import {
   ClaudeSyncClient,
   EnvAuth,
   AuthError,
-} from "@claudesync/core";
-import type { AuthProvider } from "@claudesync/core";
+} from "@infinite-room-labs/claudesync-core";
+import type { AuthProvider } from "@infinite-room-labs/claudesync-core";
 
 function resolveAuth(): AuthProvider {
   // Phase 1: EnvAuth only
@@ -1774,7 +1774,7 @@ Create `packages/mcp-server/src/__tests__/smoke.test.ts`:
 ```typescript
 import { describe, expect, it } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ClaudeSyncClient, type AuthProvider } from "@claudesync/core";
+import { ClaudeSyncClient, type AuthProvider } from "@infinite-room-labs/claudesync-core";
 
 // Synthetic test data only -- no real PII
 function createMockAuth(): AuthProvider {
@@ -1797,7 +1797,7 @@ describe("MCP Server smoke test", () => {
       ConversationSchema,
       ArtifactListResponseSchema,
       SearchResponseSchema,
-    } = await import("@claudesync/core");
+    } = await import("@infinite-room-labs/claudesync-core");
     expect(ClaudeSyncClient).toBeDefined();
     expect(EnvAuth).toBeDefined();
     expect(OrganizationSchema).toBeDefined();

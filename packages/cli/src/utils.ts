@@ -2,7 +2,7 @@ import {
   EnvAuth,
   ClaudeSyncClient,
   AuthError,
-} from "@claudesync/core";
+} from "@infinite-room-labs/claudesync-core";
 import { search } from "@metrichor/jmespath";
 import type { JSONValue } from "@metrichor/jmespath";
 

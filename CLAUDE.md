@@ -23,16 +23,16 @@ Three-layer design:
 ```
 Consumers (thin shells): MCP Server | CLI | Firefox Extension
                               |        |        |
-Core SDK:              @claudesync/core (TypeScript)
+Core SDK:              @infinite-room-labs/claudesync-core (TypeScript)
                        Auth | API Client | Artifact Client | Git Export
                               |
 Transport:             claude.ai Web API (undocumented, cookie auth)
 ```
 
 Monorepo using pnpm workspaces:
-- `packages/core/` -- The SDK (`@claudesync/core`)
-- `packages/mcp-server/` -- MCP server (`@claudesync/mcp-server`)
-- `packages/cli/` -- CLI tool (`@claudesync/cli`) -- stub
+- `packages/core/` -- The SDK (`@infinite-room-labs/claudesync-core`)
+- `packages/mcp-server/` -- MCP server (`@infinite-room-labs/claudesync-mcp-server`)
+- `packages/cli/` -- CLI tool (`@infinite-room-labs/claudesync-cli`) -- stub
 - `packages/extension/` -- Firefox extension -- future
 
 ## Current Phase: Implementation (Phase 1)

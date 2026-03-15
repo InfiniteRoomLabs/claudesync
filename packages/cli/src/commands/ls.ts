@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import type { ConversationSummary } from "@claudesync/core";
+import type { ConversationSummary } from "@infinite-room-labs/claudesync-core";
 import { createClient, resolveOrgId, truncate, outputJson } from "../utils.js";
 
 export const lsCommand = new Command("ls")

@@ -1,5 +1,5 @@
 {
-  "name": "@claudesync/mcp-server",
+  "name": "@infinite-room-labs/claudesync-mcp-server",
   "version": "0.1.0",
   "type": "module",
   "exports": {
@@ -23,7 +23,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@claudesync/core": "workspace:*",
+    "@infinite-room-labs/claudesync-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "zod": "^3.24.0"
   },

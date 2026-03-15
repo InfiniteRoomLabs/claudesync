@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-14
 **Status:** Active
-**Sprint Goal:** Deliver @claudesync/core SDK + @claudesync/mcp-server with 7 tools
+**Sprint Goal:** Deliver @infinite-room-labs/claudesync-core SDK + @infinite-room-labs/claudesync-mcp-server with 7 tools
 
 ---
 
@@ -11,9 +11,9 @@
 Three-layer design, two packages built this sprint:
 
 ```
-@claudesync/mcp-server (thin shell, 7 tools)
+@infinite-room-labs/claudesync-mcp-server (thin shell, 7 tools)
         |
-@claudesync/core (SDK)
+@infinite-room-labs/claudesync-core (SDK)
   - Auth (EnvAuth, FirefoxProfileAuth)
   - API Client (all read-only endpoints)
   - Zod Schemas (runtime validation)
@@ -43,7 +43,7 @@ claude.ai Web API (undocumented, cookie auth)
 ```
 claudesync/
   packages/
-    core/                          @claudesync/core
+    core/                          @infinite-room-labs/claudesync-core
       src/
         auth/
           types.ts                 AuthProvider interface
@@ -86,7 +86,7 @@ claudesync/
       tsconfig.json
       vitest.config.ts
 
-    mcp-server/                    @claudesync/mcp-server
+    mcp-server/                    @infinite-room-labs/claudesync-mcp-server
       src/
         server.ts                  MCP server setup + tool registration
         tools.ts                   Tool handler implementations

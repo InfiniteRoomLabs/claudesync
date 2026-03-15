@@ -1,7 +1,7 @@
 # ClaudeSync Sprint Task Backlog
 
 **Date:** 2026-03-14
-**Sprint Goal:** Deliver @claudesync/core SDK + @claudesync/mcp-server
+**Sprint Goal:** Deliver @infinite-room-labs/claudesync-core SDK + @infinite-room-labs/claudesync-mcp-server
 
 ---
 
@@ -35,7 +35,7 @@
 
 ## Task 2: Zod Schemas + TypeScript Types
 
-**Package:** @claudesync/core
+**Package:** @infinite-room-labs/claudesync-core
 **Depends on:** Task 1
 **Deliverables:**
 - `packages/core/src/schemas/organization.ts` -- OrganizationSchema
@@ -63,7 +63,7 @@
 
 ## Task 3: Auth Module -- AuthProvider Interface + EnvAuth
 
-**Package:** @claudesync/core
+**Package:** @infinite-room-labs/claudesync-core
 **Depends on:** Task 1
 **Deliverables:**
 - `packages/core/src/auth/types.ts` -- AuthProvider interface
@@ -87,7 +87,7 @@
 
 ## Task 4: Auth Module -- FirefoxProfileAuth
 
-**Package:** @claudesync/core
+**Package:** @infinite-room-labs/claudesync-core
 **Depends on:** Task 3
 **Deliverables:**
 - `packages/core/src/auth/firefox.ts` -- FirefoxProfileAuth class + findFirefoxProfiles()
@@ -107,7 +107,7 @@
 
 ## Task 5: API Client -- Endpoints + ClaudeSyncClient
 
-**Package:** @claudesync/core
+**Package:** @infinite-room-labs/claudesync-core
 **Depends on:** Tasks 2, 3
 **Deliverables:**
 - `packages/core/src/client/endpoints.ts` -- URL builders for all 11 endpoints
@@ -132,7 +132,7 @@
 
 ## Task 6: Message Tree Utilities
 
-**Package:** @claudesync/core
+**Package:** @infinite-room-labs/claudesync-core
 **Depends on:** Task 2
 **Deliverables:**
 - `packages/core/src/tree/message-tree.ts` -- buildMessageTree(), getLinearBranch(), findLeafMessages()
@@ -153,7 +153,7 @@
 
 ## Task 7: Core Package Public API (index.ts)
 
-**Package:** @claudesync/core
+**Package:** @infinite-room-labs/claudesync-core
 **Depends on:** Tasks 2, 3, 4, 5, 6
 **Deliverables:**
 - `packages/core/src/index.ts` -- barrel export of all public API
@@ -164,14 +164,14 @@
 - Exports all schemas (named exports)
 - Exports all types (type exports)
 - Exports tree utilities: buildMessageTree, getLinearBranch, findLeafMessages
-- Importing from "@claudesync/core" resolves all exports correctly
+- Importing from "@infinite-room-labs/claudesync-core" resolves all exports correctly
 - No circular dependencies
 
 ---
 
 ## Task 8: MCP Server -- Tool Registration + stdio Transport
 
-**Package:** @claudesync/mcp-server
+**Package:** @infinite-room-labs/claudesync-mcp-server
 **Depends on:** Task 7
 **Deliverables:**
 - `packages/mcp-server/src/server.ts` -- createServer() function with 7 tool registrations
@@ -192,7 +192,7 @@
 
 ## Task 9: End-to-End Smoke Test
 
-**Package:** @claudesync/mcp-server
+**Package:** @infinite-room-labs/claudesync-mcp-server
 **Depends on:** Task 8
 **Deliverables:**
 - `packages/mcp-server/__tests__/smoke.test.ts`

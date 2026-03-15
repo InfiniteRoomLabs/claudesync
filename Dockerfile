@@ -36,14 +36,14 @@ COPY packages/core/ packages/core/
 COPY packages/mcp-server/ packages/mcp-server/
 COPY packages/cli/ packages/cli/
 
-RUN pnpm --filter @claudesync/core build && \
-    pnpm --filter @claudesync/mcp-server build && \
-    pnpm --filter @claudesync/cli build
+RUN pnpm --filter @infinite-room-labs/claudesync-core build && \
+    pnpm --filter @infinite-room-labs/claudesync-mcp-server build && \
+    pnpm --filter @infinite-room-labs/claudesync-cli build
 
 # Prune each target to production deps only
 # --legacy required for pnpm v10+ with non-injected workspace deps
-RUN pnpm --filter @claudesync/mcp-server --prod deploy --legacy /app/pruned-mcp
-RUN pnpm --filter @claudesync/cli --prod deploy --legacy /app/pruned-cli
+RUN pnpm --filter @infinite-room-labs/claudesync-mcp-server --prod deploy --legacy /app/pruned-mcp
+RUN pnpm --filter @infinite-room-labs/claudesync-cli --prod deploy --legacy /app/pruned-cli
 
 # ---- Target: mcp ----
 FROM node:24-slim AS mcp

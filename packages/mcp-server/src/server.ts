@@ -5,8 +5,8 @@ import {
   EnvAuth,
   AuthError,
   ClaudeSyncError,
-} from "@claudesync/core";
-import type { AuthProvider } from "@claudesync/core";
+} from "@infinite-room-labs/claudesync-core";
+import type { AuthProvider } from "@infinite-room-labs/claudesync-core";
 
 function resolveAuth(): AuthProvider {
   // Phase 1: EnvAuth only

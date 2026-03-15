@@ -128,7 +128,7 @@ $env:CLAUDE_AI_COOKIE = 'sessionKey=<paste-value>'
 ```
 Consumers:     CLI  |  MCP Server  |  (Firefox Extension -- future)
                 |          |
-Core SDK:    @claudesync/core (TypeScript)
+Core SDK:    @infinite-room-labs/claudesync-core (TypeScript)
                Auth | API Client | Export Engine | Message Tree
                 |
 Transport:   claude.ai Web API (undocumented, cookie auth)
@@ -138,9 +138,9 @@ Transport:   claude.ai Web API (undocumented, cookie auth)
 
 | Package | Description |
 |---------|-------------|
-| `@claudesync/core` | SDK: auth, HTTP client, Zod schemas, git export engine |
-| `@claudesync/mcp-server` | MCP server with 8 tools (stdio transport) |
-| `@claudesync/cli` | CLI tool (ls, export, search, projects) |
+| `@infinite-room-labs/claudesync-core` | SDK: auth, HTTP client, Zod schemas, git export engine |
+| `@infinite-room-labs/claudesync-mcp-server` | MCP server with 8 tools (stdio transport) |
+| `@infinite-room-labs/claudesync-cli` | CLI tool (ls, export, search, projects) |
 
 ## Requirements
 

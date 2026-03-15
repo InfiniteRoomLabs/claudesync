@@ -10,7 +10,7 @@ importers:
 
   packages/cli:
     dependencies:
-      '@claudesync/core':
+      '@infinite-room-labs/claudesync-core':
         specifier: workspace:*
         version: link:../core
       '@metrichor/jmespath':
@@ -51,7 +51,7 @@ importers:
 
   packages/mcp-server:
     dependencies:
-      '@claudesync/core':
+      '@infinite-room-labs/claudesync-core':
         specifier: workspace:*
         version: link:../core
       '@modelcontextprotocol/sdk':

@@ -206,7 +206,7 @@ st1vms has `delete_all_chats()` but:
 │  └────┬─────┘ └──┬──┘ └────┬─────┘         │
 │       │          │          │                │
 ├───────┴──────────┴──────────┴────────────────┤
-│  @claudesync/core  (TypeScript SDK)          │
+│  @infinite-room-labs/claudesync-core  (TypeScript SDK)          │
 │  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
 │  │ Auth     │ │ API      │ │ Git Export   │ │
 │  │ (cookie/ │ │ Client   │ │ Engine       │ │
@@ -225,7 +225,7 @@ st1vms has `delete_all_chats()` but:
 ```
 claudesync/
 ├── packages/
-│   ├── core/                  # @claudesync/core — the SDK
+│   ├── core/                  # @infinite-room-labs/claudesync-core — the SDK
 │   │   ├── src/
 │   │   │   ├── auth/          # Session/cookie management
 │   │   │   ├── client/        # HTTP client wrapping claude.ai API
@@ -234,13 +234,13 @@ claudesync/
 │   │   │   └── index.ts
 │   │   ├── package.json
 │   │   └── tsconfig.json
-│   ├── extension/             # @claudesync/firefox-extension
+│   ├── extension/             # @infinite-room-labs/claudesync-firefox-extension
 │   │   ├── manifest.json      # Manifest V2 (Firefox) or V3
 │   │   ├── background/
 │   │   ├── popup/
 │   │   ├── content/
 │   │   └── package.json
-│   └── cli/                   # @claudesync/cli (future)
+│   └── cli/                   # @infinite-room-labs/claudesync-cli (future)
 │       └── package.json
 ├── package.json               # Workspace root
 ├── turbo.json                 # Turborepo config
@@ -249,7 +249,7 @@ claudesync/
 
 ---
 
-## SDK Design (`@claudesync/core`)
+## SDK Design (`@infinite-room-labs/claudesync-core`)
 
 ### Authentication
 
@@ -613,7 +613,7 @@ async function replayBundle(bundle: GitBundle, repoPath: string): Promise<void>;
 
 ---
 
-## Firefox Extension (`@claudesync/firefox-extension`)
+## Firefox Extension (`@infinite-room-labs/claudesync-firefox-extension`)
 
 ### Manifest
 
@@ -655,7 +655,7 @@ Injects into claude.ai pages to:
 ### Background Script
 
 - Manages auth (reads claude.ai cookies)
-- Makes API calls via `@claudesync/core`
+- Makes API calls via `@infinite-room-labs/claudesync-core`
 - Handles export generation and download triggering
 
 ---
@@ -664,7 +664,7 @@ Injects into claude.ai pages to:
 
 ### Phase 1: SDK Core + Artifact Client (Week 1-2)
 
-**Goal:** `@claudesync/core` can authenticate, fetch conversations, list/download artifacts from the wiggle API, and output a git bundle JSON.
+**Goal:** `@infinite-room-labs/claudesync-core` can authenticate, fetch conversations, list/download artifacts from the wiggle API, and output a git bundle JSON.
 
 Deliverables:
 - [ ] TypeScript project scaffolding (monorepo with pnpm workspaces, Node.js runtime)
@@ -695,7 +695,7 @@ Deliverables:
 **Goal:** CLI tool that replays git bundles into actual git repositories.
 
 Deliverables:
-- [ ] `claudesync` CLI (`npx @claudesync/cli`)
+- [ ] `claudesync` CLI (`npx @infinite-room-labs/claudesync-cli`)
 - [ ] `claudesync replay <bundle.json> [--output ./repo]` — Creates git repo from bundle
 - [ ] `claudesync export <conversation-url> [--format git|json|md]` — Direct export (requires cookie)
 - [ ] `claudesync ls` — List conversations
@@ -780,7 +780,7 @@ This project demonstrates:
 - `claude-vault` — conflates with HashiCorp
 - `conversync` — meh
 
-NPM scope: `@claudesync/core`, `@claudesync/cli`, `@claudesync/firefox-extension`  
+NPM scope: `@infinite-room-labs/claudesync-core`, `@infinite-room-labs/claudesync-cli`, `@infinite-room-labs/claudesync-firefox-extension`  
 GitHub: `infiniteroomlabs/claudesync` (or `wesgilliland/claudesync` for personal, then transfer)  
 Domain: claudesync.dev (check availability)
 

@@ -5,7 +5,7 @@ import {
   ClaudeSyncClient,
   buildGitBundle,
   exportToGit,
-} from "@claudesync/core";
+} from "@infinite-room-labs/claudesync-core";
 import { createClient, resolveOrgId } from "../utils.js";
 
 export const exportCommand = new Command("export")

@@ -5,8 +5,8 @@ import {
   ClaudeSyncClient,
   buildGitBundle,
   exportToGit,
-} from "@claudesync/core";
-import type { GitBundleCommit } from "@claudesync/core";
+} from "@infinite-room-labs/claudesync-core";
+import type { GitBundleCommit } from "@infinite-room-labs/claudesync-core";
 import { createClient, resolveOrgId, truncate, outputJson } from "../utils.js";
 
 export const projectsCommand = new Command("projects")

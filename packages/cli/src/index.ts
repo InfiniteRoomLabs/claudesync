@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { AuthError, ClaudeSyncError, RateLimitError } from "@claudesync/core";
+import { AuthError, ClaudeSyncError, RateLimitError } from "@infinite-room-labs/claudesync-core";
 import { lsCommand } from "./commands/ls.js";
 import { exportCommand } from "./commands/export.js";
 import { projectsCommand } from "./commands/projects.js";
