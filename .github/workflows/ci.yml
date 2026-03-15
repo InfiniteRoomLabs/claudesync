@@ -35,8 +35,8 @@ jobs:
             packages/*/node_modules
           key: deps-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
-  typecheck:
-    name: Typecheck
+  build:
+    name: Build & Typecheck
     needs: install
     runs-on: ubuntu-latest
     steps:
@@ -58,7 +58,8 @@ jobs:
             packages/*/node_modules
           key: deps-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
-      - run: pnpm typecheck
+      # Build compiles TypeScript (which IS the typecheck -- tsc catches all type errors)
+      - run: pnpm build
 
   lint:
     name: Lint
@@ -110,28 +111,3 @@ jobs:
           key: deps-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       - run: pnpm test
-
-  build:
-    name: Build
-    needs: [typecheck, test]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: pnpm
-
-      - uses: actions/cache/restore@v4
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: deps-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-
-      - run: pnpm build

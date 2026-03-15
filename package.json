@@ -5,7 +5,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r exec tsc --noEmit",
+    "typecheck": "pnpm -r run typecheck",
     "lint": "echo \"TODO: configure ESLint or Biome\" && exit 0"
   },
   "engines": {
