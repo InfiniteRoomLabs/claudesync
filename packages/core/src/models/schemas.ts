@@ -16,8 +16,8 @@ export const OrganizationSchema = z
 // changes without notice. Only stable fields are typed explicitly.
 export const ConversationSettingsSchema = z
   .object({
-    enabled_web_search: z.boolean().optional(),
-    enabled_mcp_tools: z.record(z.string(), z.boolean()).optional(),
+    enabled_web_search: z.boolean().nullable().optional(),
+    enabled_mcp_tools: z.record(z.string(), z.boolean()).nullable().optional(),
   })
   .passthrough();
 
@@ -54,7 +54,7 @@ export const ConversationSummarySchema = z
     model: z.string().nullable(),
     created_at: z.string(),
     updated_at: z.string(),
-    current_leaf_message_uuid: z.string(),
+    current_leaf_message_uuid: z.string().nullable(),
     settings: ConversationSettingsSchema.optional(),
     is_starred: z.boolean().optional(),
     is_temporary: z.boolean().optional(),
@@ -114,8 +114,8 @@ export const ProjectSchema = z
     name: z.string(),
     description: z.string().optional(),
     is_private: z.boolean().optional(),
-    docs_count: z.number().optional(),
-    files_count: z.number().optional(),
+    docs_count: z.number().nullable().optional(),
+    files_count: z.number().nullable().optional(),
     created_at: z.string(),
     updated_at: z.string(),
   })
