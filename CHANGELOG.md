@@ -26,6 +26,12 @@ All notable changes to this project will be documented in this file.
 - Consolidated design review (`docs/spike-results/design-review.md`)
 - Sprint architecture and task documents
 
+### Added (Phase 3)
+- `claudesync` CLI tool with 4 commands: `ls`, `export`, `projects`, `search`
+- `claudesync export <id>` creates a git repo from a conversation with artifacts
+- `FirefoxProfileAuth`: reads session cookies from Firefox's cookies.sqlite (supports standard, Snap, Flatpak paths)
+- CLI supports `--json` output, `--starred` filter, configurable git author
+
 ### Added (Phase 2)
 - Git export engine: `exportToGit()` creates real git repos from conversations using `isomorphic-git`
 - `GitBundle` JSON format: intermediate representation for environments without git

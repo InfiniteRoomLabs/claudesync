@@ -1,6 +1,7 @@
 // Auth
 export type { AuthProvider } from "./auth/types.js";
 export { EnvAuth } from "./auth/env.js";
+export { FirefoxProfileAuth } from "./auth/firefox.js";
 export { AuthError } from "./auth/errors.js";
 
 // Client
