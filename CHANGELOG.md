@@ -100,6 +100,8 @@ All notable changes to this project will be documented in this file.
 ### Security
 - Release pipeline uses OIDC trusted publishing (no long-lived NPM_TOKEN)
 - Packages renamed from `@claudesync/*` to `@infinite-room-labs/*`
+- Split release.yml into `publish-npm.yml` and `publish-docker.yml` (independent failure domains)
+- Docker publish builds both MCP and CLI targets in parallel via matrix strategy
 
 ### Changed
 - PRD updated to v0.3.0 with all spike findings and confirmed data models
