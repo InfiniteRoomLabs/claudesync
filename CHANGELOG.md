@@ -26,6 +26,16 @@ All notable changes to this project will be documented in this file.
 - Consolidated design review (`docs/spike-results/design-review.md`)
 - Sprint architecture and task documents
 
+### Added (Installer Scripts)
+- `scripts/install.sh` -- pipe-to-shell installer that auto-configures a `claudesync` CLI wrapper
+  - Detects shell (bash, zsh, fish) and installs the appropriate function/script
+  - Auto-reads Firefox `sessionKey` cookie via sqlite3 (supports standard, Snap, Flatpak, macOS paths)
+  - Runs the CLI Docker container with cookie injection and volume mount
+- `scripts/install-mcp.sh` -- interactive MCP server configuration for Claude Code, Claude Desktop, or `.mcp.json`
+  - Creates `~/.local/bin/claudesync-mcp` wrapper that auto-reads cookies on every invocation
+  - Supports `--target` flag for non-interactive use
+  - Merges into existing config files without overwriting (jq or awk fallback)
+
 ### Added (Infrastructure)
 - Docker Hub repositories: `deathnerd/claudesync-mcp` (MCP server) and `deathnerd/claudesync` (CLI)
 - Dockerfile supports two targets: `--target mcp` and `--target cli`
