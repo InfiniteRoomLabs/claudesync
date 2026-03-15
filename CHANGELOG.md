@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.1] - 2026-03-15
+## [0.3.0] - 2026-03-15
 
 ### Added
 - `@infinite-room-labs/claudesync-core` SDK with Zod schemas, auth module, HTTP client, message tree utilities (44 tests passing)
@@ -25,6 +25,10 @@ All notable changes to this project will be documented in this file.
 - Spike results documentation (`docs/spike-results/findings.md`)
 - Consolidated design review (`docs/spike-results/design-review.md`)
 - Sprint architecture and task documents
+
+### Fixed
+- TUI only launches when stdin is a TTY (prevents help-instead-of-TUI via npx/pipe)
+- Docker wrapper uses `-it` flags when no args so TUI gets a proper terminal
 
 ### Added (TUI)
 - Interactive terminal browser: run `claudesync` with no subcommand to launch

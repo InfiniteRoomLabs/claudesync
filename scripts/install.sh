@@ -294,10 +294,13 @@ claudesync() {
   fi
 
   # -- run container --
+  # Use -it (interactive + TTY) when no args so the TUI can render
+  local _cs_docker_flags="--rm -e CLAUDE_AI_COOKIE -v $(pwd):/data"
+  if [ $# -eq 0 ] && [ -t 0 ]; then
+    _cs_docker_flags="-it ${_cs_docker_flags}"
+  fi
   CLAUDE_AI_COOKIE="${_cs_cookie_header}" \
-    docker run --rm \
-      -e CLAUDE_AI_COOKIE \
-      -v "$(pwd):/data" \
+    docker run ${_cs_docker_flags} \
       deathnerd/claudesync:latest \
       "$@"
 }
@@ -428,10 +431,13 @@ FISH_FUNCTION='function claudesync
     end
 
     # -- run container --
+    # Use -it when no args so the TUI can render
+    set -l _cs_docker_args --rm -e CLAUDE_AI_COOKIE -v (pwd)":/data"
+    if test (count $argv) -eq 0; and isatty stdin
+        set _cs_docker_args -it $_cs_docker_args
+    end
     CLAUDE_AI_COOKIE="$_cs_cookie_header" \
-        docker run --rm \
-            -e CLAUDE_AI_COOKIE \
-            -v (pwd)":/data" \
+        docker run $_cs_docker_args \
             deathnerd/claudesync:latest \
             $argv
 end

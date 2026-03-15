@@ -50,13 +50,14 @@ function handleError(error: unknown): void {
   process.exit(1);
 }
 
-// If no subcommand given, launch interactive TUI
-if (process.argv.length <= 2) {
+// If no subcommand given and we have a TTY, launch interactive TUI
+if (process.argv.length <= 2 && process.stdin.isTTY) {
   import("ink").then(async ({ render }) => {
     const { createElement } = await import("react");
     const { App } = await import("./tui/App.js");
     render(createElement(App));
   }).catch(handleError);
 } else {
+  // Show help if no args and no TTY, otherwise parse subcommand
   program.parseAsync(process.argv).catch(handleError);
 }
