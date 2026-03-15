@@ -27,17 +27,21 @@ All notable changes to this project will be documented in this file.
 - Sprint architecture and task documents
 
 ### Added (Installer Scripts)
-- `scripts/install.sh` -- pipe-to-shell installer that auto-configures a `claudesync` CLI wrapper
-  - Detects shell (bash, zsh, fish) and installs the appropriate function/script
-  - Auto-reads Firefox `sessionKey` cookie via sqlite3 (supports standard, Snap, Flatpak, macOS paths)
-  - Runs the CLI Docker container with cookie injection and volume mount
-  - Fallback chain: CLAUDE_AI_COOKIE env var > Firefox > Chrome (macOS) > manual paste instructions
-  - Runtime dependency checks with OS-specific install guidance (docker, sqlite3)
-- `scripts/install-mcp.sh` -- interactive MCP server configuration for Claude Code, Claude Desktop, or `.mcp.json`
-  - Creates `~/.local/bin/claudesync-mcp` wrapper that auto-reads cookies on every invocation
-  - Same fallback chain and dependency checks as install.sh
-  - Supports `--target` flag for non-interactive use
-  - Merges into existing config files without overwriting (jq or awk fallback)
+- `scripts/install.sh` -- pipe-to-shell installer (bash, zsh, fish)
+  - Auto-reads Firefox cookie via sqlite3 (standard, Snap, Flatpak, macOS paths)
+  - Fallback chain: CLAUDE_AI_COOKIE env var > Firefox > Chrome (macOS) > manual paste
+  - Runtime dependency checks with OS-specific install guidance
+- `scripts/install.ps1` -- PowerShell installer (Windows)
+  - Chrome DPAPI decryption (native, no external deps) tried first
+  - Firefox fallback, then manual paste instructions
+  - Works on both PowerShell 5.1 and 7+
+- `scripts/install-mcp.sh` -- MCP server config for Claude Code / Desktop / .mcp.json (Unix)
+- `scripts/install-mcp.ps1` -- MCP server config (Windows/PowerShell)
+- `scripts/uninstall.sh` -- Unix uninstaller (removes function, wrapper, optionally Docker images)
+- `scripts/uninstall.ps1` -- Windows uninstaller (removes function, wrapper, PATH entry, optionally Docker images)
+- All scripts support `--force` / `-f` to skip interactive prompts (upgrade scenarios)
+- All scripts prompt interactively before replacing existing installations
+- README.md with full usage documentation, install instructions, and architecture overview
 
 ### Added (Infrastructure)
 - Docker Hub repositories: `deathnerd/claudesync-mcp` (MCP server) and `deathnerd/claudesync` (CLI)

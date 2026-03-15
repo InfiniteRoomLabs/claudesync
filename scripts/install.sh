@@ -14,6 +14,17 @@
 set -eu
 
 # ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+FORCE=0
+for _arg in "$@"; do
+    case "${_arg}" in
+        --force|-f) FORCE=1 ;;
+        *) printf "Unknown argument: %s\n" "${_arg}" >&2; exit 1 ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
 # Terminal color helpers (POSIX-safe, only when stdout is a tty)
 # ---------------------------------------------------------------------------
 if [ -t 1 ]; then
@@ -32,6 +43,21 @@ success() { printf "%b[claudesync]%b %s\n" "${GREEN}" "${RESET}" "$*"; }
 warn()    { printf "%b[claudesync]%b %s\n" "${YELLOW}" "${RESET}" "$*"; }
 error()   { printf "%b[claudesync]%b %s\n" "${RED}"   "${RESET}" "$*" >&2; }
 die()     { error "$*"; exit 1; }
+
+# Interactive prompt: returns 0 (yes) or 1 (no).
+# When --force is set, always returns 0.
+# Args: $1 = prompt message
+confirm_replace() {
+    if [ "${FORCE}" = "1" ]; then
+        return 0
+    fi
+    printf "%b[claudesync]%b %s [y/N] " "${YELLOW}" "${RESET}" "$1"
+    read -r _answer
+    case "${_answer}" in
+        [Yy]|[Yy][Ee][Ss]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
 # ---------------------------------------------------------------------------
 # Banner
@@ -481,8 +507,24 @@ MARKER="# claudesync -- installed by https://github.com/InfiniteRoomLabs/claudes
 install_bash_zsh() {
     _rc="$1"
     if grep -qF "claudesync()" "${_rc}" 2>/dev/null; then
-        warn "claudesync function already present in ${_rc} -- skipping."
-        return 0
+        if confirm_replace "Replace existing claudesync function in ${_rc}?"; then
+            # Remove old installation: everything from the marker line through
+            # the function body. We delete from the marker to the next blank
+            # line after a closing brace, which covers the full function block.
+            _tmp_rc="${_rc}.claudesync.tmp"
+            awk -v marker="${MARKER}" '
+                BEGIN { skip=0 }
+                $0 == marker { skip=1; next }
+                skip && /^[[:space:]]*$/ && saw_brace { skip=0; next }
+                skip && /^}/ { saw_brace=1; next }
+                skip { next }
+                { print }
+            ' "${_rc}" > "${_tmp_rc}" && mv "${_tmp_rc}" "${_rc}"
+            info "Removed old claudesync function from ${_rc}"
+        else
+            warn "Skipping -- existing installation in ${_rc} left unchanged."
+            return 0
+        fi
     fi
     printf "\n%s\n%s\n" "${MARKER}" "${BASH_ZSH_FUNCTION}" >> "${_rc}"
     success "Installed claudesync function into ${_rc}"
@@ -491,9 +533,15 @@ install_bash_zsh() {
 install_fish() {
     _fish_dir="${HOME}/.config/fish/functions"
     _fish_file="${_fish_dir}/claudesync.fish"
+    _fish_helper="${_fish_dir}/__claudesync_try_firefox.fish"
     if [ -f "${_fish_file}" ]; then
-        warn "claudesync.fish already exists at ${_fish_file} -- skipping."
-        return 0
+        if confirm_replace "Replace existing ${_fish_file}?"; then
+            rm -f "${_fish_file}" "${_fish_helper}"
+            info "Removed old fish function files."
+        else
+            warn "Skipping -- existing installation at ${_fish_file} left unchanged."
+            return 0
+        fi
     fi
     mkdir -p "${_fish_dir}"
     printf "%s\n%s\n" "${MARKER}" "${FISH_FUNCTION}" > "${_fish_file}"

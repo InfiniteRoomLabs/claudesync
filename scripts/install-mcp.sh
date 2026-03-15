@@ -33,6 +33,21 @@ warn()    { printf "%b[claudesync-mcp]%b %s\n" "${YELLOW}" "${RESET}" "$*"; }
 error()   { printf "%b[claudesync-mcp]%b %s\n" "${RED}"    "${RESET}" "$*" >&2; }
 die()     { error "$*"; exit 1; }
 
+# Interactive prompt: returns 0 (yes) or 1 (no).
+# When --force is set, always returns 0.
+# Args: $1 = prompt message
+confirm_replace() {
+    if [ "${FORCE}" = "1" ]; then
+        return 0
+    fi
+    printf "%b[claudesync-mcp]%b %s [y/N] " "${YELLOW}" "${RESET}" "$1"
+    read -r _answer
+    case "${_answer}" in
+        [Yy]|[Yy][Ee][Ss]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # ---------------------------------------------------------------------------
 # Banner
 # ---------------------------------------------------------------------------
@@ -45,6 +60,7 @@ printf "%b\n" "${RESET}"
 # Argument parsing
 # ---------------------------------------------------------------------------
 TARGET=""
+FORCE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --target)
@@ -54,8 +70,11 @@ while [ $# -gt 0 ]; do
         --target=*)
             TARGET="${1#--target=}"
             ;;
+        --force|-f)
+            FORCE=1
+            ;;
         -h|--help)
-            printf "Usage: %s [--target claude-code|claude-desktop|mcp-json]\n" "$0"
+            printf "Usage: %s [--target claude-code|claude-desktop|mcp-json] [--force|-f]\n" "$0"
             exit 0
             ;;
         *)
@@ -182,6 +201,16 @@ WRAPPER_DIR="${HOME}/.local/bin"
 WRAPPER_PATH="${WRAPPER_DIR}/claudesync-mcp"
 
 create_wrapper() {
+    if [ -f "${WRAPPER_PATH}" ]; then
+        if confirm_replace "Replace existing wrapper at ${WRAPPER_PATH}?"; then
+            rm -f "${WRAPPER_PATH}"
+            info "Removed old wrapper script."
+        else
+            warn "Skipping -- existing wrapper at ${WRAPPER_PATH} left unchanged."
+            return 0
+        fi
+    fi
+
     mkdir -p "${WRAPPER_DIR}"
 
     # Build candidate list for this platform.
@@ -401,7 +430,16 @@ install_claude_code() {
     fi
 
     if grep -q '"claudesync"' "${_target_file}" 2>/dev/null; then
-        warn "claudesync already present in ${_target_file} -- skipping."
+        if confirm_replace "Replace existing claudesync entry in ${_target_file}?"; then
+            if [ "${JQ_AVAILABLE}" = "1" ]; then
+                _tmp="${_target_file}.claudesync.tmp"
+                jq 'del(.mcpServers.claudesync)' "${_target_file}" > "${_tmp}" && mv "${_tmp}" "${_target_file}"
+            fi
+            merge_mcp_server "${_target_file}" "claudesync" "$(mcp_config_block)"
+            success "MCP server entry replaced in ${_target_file}"
+        else
+            warn "Skipping -- existing entry in ${_target_file} left unchanged."
+        fi
     else
         merge_mcp_server "${_target_file}" "claudesync" "$(mcp_config_block)"
         success "MCP server entry written to ${_target_file}"
@@ -431,7 +469,16 @@ install_claude_desktop() {
     fi
 
     if grep -q '"claudesync"' "${_config_file}" 2>/dev/null; then
-        warn "claudesync already present in ${_config_file} -- skipping."
+        if confirm_replace "Replace existing claudesync entry in ${_config_file}?"; then
+            if [ "${JQ_AVAILABLE}" = "1" ]; then
+                _tmp="${_config_file}.claudesync.tmp"
+                jq 'del(.mcpServers.claudesync)' "${_config_file}" > "${_tmp}" && mv "${_tmp}" "${_config_file}"
+            fi
+            merge_mcp_server "${_config_file}" "claudesync" "$(mcp_config_block)"
+            success "MCP server entry replaced in ${_config_file}"
+        else
+            warn "Skipping -- existing entry in ${_config_file} left unchanged."
+        fi
     else
         merge_mcp_server "${_config_file}" "claudesync" "$(mcp_config_block)"
         success "MCP server entry written to ${_config_file}"
@@ -450,7 +497,16 @@ install_mcp_json() {
     fi
 
     if grep -q '"claudesync"' "${_mcp_file}" 2>/dev/null; then
-        warn "claudesync already present in ${_mcp_file} -- skipping."
+        if confirm_replace "Replace existing claudesync entry in ${_mcp_file}?"; then
+            if [ "${JQ_AVAILABLE}" = "1" ]; then
+                _tmp="${_mcp_file}.claudesync.tmp"
+                jq 'del(.mcpServers.claudesync)' "${_mcp_file}" > "${_tmp}" && mv "${_tmp}" "${_mcp_file}"
+            fi
+            merge_mcp_server "${_mcp_file}" "claudesync" "$(mcp_config_block)"
+            success "MCP server entry replaced in ${_mcp_file}"
+        else
+            warn "Skipping -- existing entry in ${_mcp_file} left unchanged."
+        fi
     else
         merge_mcp_server "${_mcp_file}" "claudesync" "$(mcp_config_block)"
         success "MCP server entry written to ${_mcp_file}"
