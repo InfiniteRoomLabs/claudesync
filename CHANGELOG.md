@@ -97,6 +97,10 @@ All notable changes to this project will be documented in this file.
 - All installers auto-install completions; uninstallers clean them up
 - Zod schemas now accept `null` for `current_leaf_message_uuid`, `enabled_web_search`, `enabled_mcp_tools`, `docs_count`, `files_count` (discovered via live API testing against 1,375 conversations)
 
+### Security
+- Release pipeline uses OIDC trusted publishing (no long-lived NPM_TOKEN)
+- Packages renamed from `@claudesync/*` to `@infinite-room-labs/*`
+
 ### Changed
 - PRD updated to v0.3.0 with all spike findings and confirmed data models
 - Implementation plan rewritten: Bun replaced with Node.js v24 LTS / pnpm / Vitest

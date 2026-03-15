@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 env:
   REGISTRY: ghcr.io
@@ -99,12 +100,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
+      # OIDC trusted publishing -- no NPM_TOKEN needed.
+      # Each package must have trusted publisher configured on npmjs.com:
+      # Settings > Trusted Publisher > GitHub Actions:
+      #   org=InfiniteRoomLabs, repo=claudesync, workflow=release.yml
       - name: Publish @infinite-room-labs/claudesync-core
         run: pnpm --filter @infinite-room-labs/claudesync-core publish --no-git-checks --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @infinite-room-labs/claudesync-mcp-server
         run: pnpm --filter @infinite-room-labs/claudesync-mcp-server publish --no-git-checks --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @infinite-room-labs/claudesync-cli
+        run: pnpm --filter @infinite-room-labs/claudesync-cli publish --no-git-checks --access public
