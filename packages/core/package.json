@@ -9,7 +9,9 @@
       "development": "./src/index.ts"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
@@ -17,12 +19,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "zod": "^3.24.0",
-    "better-sqlite3": "^11.0.0"
+    "better-sqlite3": "^11.0.0",
+    "isomorphic-git": "^1.37.4",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
     "typescript": "^5.8.0",
-    "vitest": "^3.1.0",
-    "@types/better-sqlite3": "^7.6.0"
+    "vitest": "^3.1.0"
   }
 }

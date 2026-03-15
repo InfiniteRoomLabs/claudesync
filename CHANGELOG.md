@@ -26,6 +26,14 @@ All notable changes to this project will be documented in this file.
 - Consolidated design review (`docs/spike-results/design-review.md`)
 - Sprint architecture and task documents
 
+### Added (Phase 2)
+- Git export engine: `exportToGit()` creates real git repos from conversations using `isomorphic-git`
+- `GitBundle` JSON format: intermediate representation for environments without git
+- `buildGitBundle()`: converts conversation + artifacts into a structured commit plan
+- `formatConversation()`: renders message threads as markdown
+- MCP tools: `list_projects`, `get_project_docs`, `list_artifacts`, `download_artifact`
+- Live-tested: successfully exported a conversation with artifacts to a 2-commit git repo
+
 ### Fixed
 - Zod schemas now accept `null` for `current_leaf_message_uuid`, `enabled_web_search`, `enabled_mcp_tools`, `docs_count`, `files_count` (discovered via live API testing against 1,375 conversations)
 

@@ -48,3 +48,10 @@ export {
   findLeafMessages,
   getLinearBranch,
 } from "./tree/message-tree.js";
+
+// Export engine
+export type { GitBundle, GitBundleCommit } from "./export/types.js";
+export type { BuildGitBundleOptions } from "./export/bundle-builder.js";
+export { buildGitBundle } from "./export/bundle-builder.js";
+export { exportToGit } from "./export/git-exporter.js";
+export { formatConversation } from "./export/conversation-formatter.js";

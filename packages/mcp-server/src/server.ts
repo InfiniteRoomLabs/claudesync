@@ -181,5 +181,149 @@ export function createServer(): McpServer {
     }
   );
 
+  // --- list_projects ---
+  server.tool(
+    "list_projects",
+    "List projects in a claude.ai organization. Returns project metadata including name, description, docs_count, and files_count.",
+    {
+      orgId: z
+        .string()
+        .optional()
+        .describe(
+          "Organization UUID. Omit to auto-detect from session."
+        ),
+    },
+    async ({ orgId }) => {
+      return withErrorHandling(async () => {
+        const resolvedOrgId =
+          orgId ?? (await auth.getOrganizationId());
+        const projects = await client.listProjects(resolvedOrgId);
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(projects, null, 2),
+            },
+          ],
+        };
+      });
+    }
+  );
+
+  // --- get_project_docs ---
+  server.tool(
+    "get_project_docs",
+    "Get knowledge file contents for a claude.ai project. Returns the list of project documents with their content.",
+    {
+      projectId: z
+        .string()
+        .describe("The project UUID to retrieve docs for"),
+      orgId: z
+        .string()
+        .optional()
+        .describe(
+          "Organization UUID. Omit to auto-detect from session."
+        ),
+    },
+    async ({ projectId, orgId }) => {
+      return withErrorHandling(async () => {
+        const resolvedOrgId =
+          orgId ?? (await auth.getOrganizationId());
+        const docs = await client.getProjectDocs(
+          resolvedOrgId,
+          projectId
+        );
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(docs, null, 2),
+            },
+          ],
+        };
+      });
+    }
+  );
+
+  // --- list_artifacts ---
+  server.tool(
+    "list_artifacts",
+    "List artifact files in a conversation's wiggle filesystem. Returns file metadata including paths, sizes, and types.",
+    {
+      conversationId: z
+        .string()
+        .describe("The conversation UUID to list artifacts for"),
+      orgId: z
+        .string()
+        .optional()
+        .describe(
+          "Organization UUID. Omit to auto-detect from session."
+        ),
+    },
+    async ({ conversationId, orgId }) => {
+      return withErrorHandling(async () => {
+        const resolvedOrgId =
+          orgId ?? (await auth.getOrganizationId());
+        const artifacts = await client.listArtifacts(
+          resolvedOrgId,
+          conversationId
+        );
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(artifacts, null, 2),
+            },
+          ],
+        };
+      });
+    }
+  );
+
+  // --- download_artifact ---
+  server.tool(
+    "download_artifact",
+    "Download an artifact file from a conversation's wiggle filesystem. Returns file content as text.",
+    {
+      conversationId: z
+        .string()
+        .describe("The conversation UUID that contains the artifact"),
+      filePath: z
+        .string()
+        .describe(
+          "Full path of the artifact file (e.g. /mnt/user-data/...)"
+        ),
+      orgId: z
+        .string()
+        .optional()
+        .describe(
+          "Organization UUID. Omit to auto-detect from session."
+        ),
+    },
+    async ({ conversationId, filePath, orgId }) => {
+      return withErrorHandling(async () => {
+        const resolvedOrgId =
+          orgId ?? (await auth.getOrganizationId());
+        const content = await client.downloadArtifact(
+          resolvedOrgId,
+          conversationId,
+          filePath
+        );
+        const text =
+          typeof content === "string"
+            ? content
+            : `[Binary content: ${content.byteLength} bytes]`;
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text,
+            },
+          ],
+        };
+      });
+    }
+  );
+
   return server;
 }
