@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.0] - 2026-03-15
+## [0.2.1] - 2026-03-15
 
 ### Added
 - `@infinite-room-labs/claudesync-core` SDK with Zod schemas, auth module, HTTP client, message tree utilities (44 tests passing)
