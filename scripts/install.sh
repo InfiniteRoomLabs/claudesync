@@ -52,7 +52,7 @@ confirm_replace() {
         return 0
     fi
     printf "%b[claudesync]%b %s [y/N] " "${YELLOW}" "${RESET}" "$1"
-    read -r _answer
+    read -r _answer </dev/tty
     case "${_answer}" in
         [Yy]|[Yy][Ee][Ss]) return 0 ;;
         *) return 1 ;;

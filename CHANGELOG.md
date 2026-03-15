@@ -64,6 +64,7 @@ All notable changes to this project will be documented in this file.
 - Live-tested: successfully exported a conversation with artifacts to a 2-commit git repo
 
 ### Fixed
+- Interactive prompts read from `/dev/tty` so `curl | sh` pipe-to-shell works correctly
 - Dockerfile CLI target: WORKDIR changed to /data so exports write to mounted volume, not /app
 - Dockerfile: add `--legacy` flag to `pnpm deploy` for pnpm v10 compatibility
 - Docker image builds and runs successfully (385MB, node:24-slim)

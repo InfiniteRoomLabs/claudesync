@@ -41,7 +41,7 @@ confirm_replace() {
         return 0
     fi
     printf "%b[claudesync-mcp]%b %s [y/N] " "${YELLOW}" "${RESET}" "$1"
-    read -r _answer
+    read -r _answer </dev/tty
     case "${_answer}" in
         [Yy]|[Yy][Ee][Ss]) return 0 ;;
         *) return 1 ;;
@@ -413,7 +413,7 @@ install_claude_code() {
     printf "    1) Global (user-level) -- ~/.claude.json\n"
     printf "    2) Project (current directory) -- .mcp.json\n"
     printf "\n  Enter choice [1/2]: "
-    read -r _scope
+    read -r _scope </dev/tty
     case "${_scope}" in
         2)
             _target_file="$(pwd)/.mcp.json"
@@ -525,7 +525,7 @@ select_target() {
     printf "    2) Claude Desktop\n"
     printf "    3) Project .mcp.json  (current directory)\n"
     printf "\n  Enter choice [1-3]: "
-    read -r _choice
+    read -r _choice </dev/tty
     case "${_choice}" in
         1) echo "claude-code" ;;
         2) echo "claude-desktop" ;;
