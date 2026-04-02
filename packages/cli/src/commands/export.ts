@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { resolve } from "node:path";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, rmSync } from "node:fs";
 import {
   ClaudeSyncClient,
   buildGitBundle,
@@ -13,7 +13,7 @@ export const exportCommand = new Command("export")
   .argument("<conversation-id>", "Conversation UUID to export")
   .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
   .option("--output <path>", "Output directory (default: ./<conversation-name>)")
-  .option("--format <format>", "Output format: git or json", "git")
+  .option("--format <format>", "Output format: git, json, or files", "git")
   .option("--author-name <name>", "Git author name", "Claude")
   .option("--author-email <email>", "Git author email", "claude@anthropic.com")
   .action(async (
@@ -71,7 +71,7 @@ export const exportCommand = new Command("export")
         console.log(JSON.stringify(bundle, null, 2));
       }
     } else {
-      // git format
+      // git and files formats both use exportToGit for the file tree
       const slug = conversation.name
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
@@ -79,10 +79,20 @@ export const exportCommand = new Command("export")
         .slice(0, 60);
       const outputPath = resolve(options.output ?? `./${slug}`);
 
-      console.log(`Exporting to git repository: ${outputPath}`);
+      console.log(`Exporting to ${options.format === "files" ? "file tree" : "git repository"}: ${outputPath}`);
       await exportToGit(bundle, outputPath);
+
+      // "files" format: reuse exportToGit for the file tree, then strip .git.
+      // Fast-and-simple approach -- if this becomes a hot path, write a dedicated
+      // flat file exporter that skips git init/stage/commit entirely.
+      if (options.format === "files") {
+        rmSync(resolve(outputPath, ".git"), { recursive: true, force: true });
+      }
+
       console.log(`\nExport complete!`);
-      console.log(`  Repository: ${outputPath}`);
-      console.log(`  Commits: ${bundle.commits.length}`);
+      console.log(`  ${options.format === "files" ? "Directory" : "Repository"}: ${outputPath}`);
+      if (options.format === "git") {
+        console.log(`  Commits: ${bundle.commits.length}`);
+      }
     }
   });

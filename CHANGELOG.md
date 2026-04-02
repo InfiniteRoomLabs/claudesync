@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-04-02
+
+### Added
+- `claudesync export-all` command: export entire organization (all projects + standalone conversations) in one shot
+- `--format files` option on `export`, `projects export`, and `export-all`: plain file tree output (no .git)
+- `--skip-existing` flag on `export-all` for resumable exports after interruption or rate limiting
+
+### Fixed
+- Schema now tolerates absent `model`, `current_leaf_message_uuid`, and `parent_message_uuid` fields in API responses (some conversations omit these entirely)
+
 ## [0.3.1] - 2026-03-15
 
 ### Changed

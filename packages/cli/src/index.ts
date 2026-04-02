@@ -5,6 +5,7 @@ import { lsCommand } from "./commands/ls.js";
 import { exportCommand } from "./commands/export.js";
 import { projectsCommand } from "./commands/projects.js";
 import { searchCommand } from "./commands/search.js";
+import { exportAllCommand } from "./commands/export-all.js";
 
 const program = new Command();
 
@@ -17,6 +18,7 @@ program.addCommand(lsCommand);
 program.addCommand(exportCommand);
 program.addCommand(projectsCommand);
 program.addCommand(searchCommand);
+program.addCommand(exportAllCommand);
 
 // TUI subcommand
 program

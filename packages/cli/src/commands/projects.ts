@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { resolve } from "node:path";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import {
   ClaudeSyncClient,
   buildGitBundle,
@@ -58,7 +58,7 @@ projectsCommand
   .argument("<project-id>", "Project UUID to export")
   .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
   .option("--output <path>", "Output directory (default: ./<project-name>)")
-  .option("--format <format>", "Output format: git or json", "git")
+  .option("--format <format>", "Output format: git, json, or files", "git")
   .option("--author-name <name>", "Git author name", "Claude")
   .option("--author-email <email>", "Git author email", "claude@anthropic.com")
   .option("--skip-artifacts", "Skip downloading artifacts (faster)")
@@ -205,12 +205,23 @@ projectsCommand
         console.log(JSON.stringify(fullBundle, null, 2));
       }
     } else {
+      // git and files formats both use exportToGit for the file tree
       const outputPath = resolve(options.output ?? `./${projectSlug}`);
-      console.log(`\nExporting to git repository: ${outputPath}`);
+      console.log(`\nExporting to ${options.format === "files" ? "file tree" : "git repository"}: ${outputPath}`);
       await exportToGit(fullBundle, outputPath);
+
+      // "files" format: reuse exportToGit for the file tree, then strip .git.
+      // Fast-and-simple approach -- if this becomes a hot path, write a dedicated
+      // flat file exporter that skips git init/stage/commit entirely.
+      if (options.format === "files") {
+        rmSync(resolve(outputPath, ".git"), { recursive: true, force: true });
+      }
+
       console.log(`\nExport complete!`);
-      console.log(`  Repository: ${outputPath}`);
-      console.log(`  Commits: ${commits.length}`);
+      console.log(`  ${options.format === "files" ? "Directory" : "Repository"}: ${outputPath}`);
+      if (options.format === "git") {
+        console.log(`  Commits: ${commits.length}`);
+      }
       console.log(`  Knowledge docs: ${docs.length}`);
       console.log(`  Conversations: ${conversations.length}`);
     }
