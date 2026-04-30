@@ -1,6 +1,6 @@
 {
   "name": "@infinite-room-labs/claudesync-core",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "repository": { "type": "git", "url": "https://github.com/InfiniteRoomLabs/claudesync" },
   "type": "module",
   "exports": {
