@@ -93,3 +93,11 @@ export {
   syncConversation,
   isSameByListMetadata,
 } from "./sync/incremental.js";
+export type {
+  FetchAndBuildOptions,
+  FetchAndBuildResult,
+} from "./sync/fetch.js";
+export { fetchAndBuild } from "./sync/fetch.js";
+
+// Naming helpers
+export { slugify, safeSlug, displayName } from "./util/naming.js";

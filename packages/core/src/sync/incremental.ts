@@ -7,7 +7,6 @@ import type {
   Conversation,
   ConversationSummary,
 } from "../models/types.js";
-import { buildGitBundle } from "../export/bundle-builder.js";
 import { exportToGit, appendToGit } from "../export/git-exporter.js";
 import { diffConversation } from "./diff.js";
 import {
@@ -22,6 +21,8 @@ import {
   type SyncState,
 } from "./state.js";
 import { buildMessageTree, findLeafMessages } from "../tree/message-tree.js";
+import { fetchAndBuild } from "./fetch.js";
+import { displayName as toDisplayName } from "../util/naming.js";
 
 export type ExportFormat = "git" | "files" | "json";
 
@@ -41,6 +42,8 @@ export interface SyncConversationResult {
   action: "skipped" | "skipped-existing" | "full" | "incremental";
   reason?: string;
   changelogWritten: boolean;
+  /** Human-readable label (falls back to `<unnamed <uuid>>` for nameless conversations). */
+  displayName: string;
 }
 
 /**
@@ -78,6 +81,9 @@ export async function syncConversation(
     ? path.dirname(outputPath)
     : outputPath;
 
+  // Pre-compute display label so even early-return code paths can include it.
+  const prelimDisplayName = toDisplayName(summary.name, summary.uuid);
+
   // --skip-existing: legacy, dumb existence check.
   if (options.skipExisting) {
     const target = options.format === "json" ? outputPath + ".json" : outputPath;
@@ -86,6 +92,7 @@ export async function syncConversation(
         action: "skipped-existing",
         reason: "output exists",
         changelogWritten: false,
+        displayName: prelimDisplayName,
       };
     }
   }
@@ -106,46 +113,31 @@ export async function syncConversation(
       action: "skipped",
       reason: "unchanged since last sync",
       changelogWritten: false,
+      displayName: prelimDisplayName,
     };
   }
 
-  // Fetch full tree + artifacts.
-  const conversation = await client.getConversation(orgId, summary.uuid, {
-    tree: true,
+  // Single source of truth for fetch + build.
+  const built = await fetchAndBuild(client, orgId, summary, {
+    authorName: options.authorName,
+    authorEmail: options.authorEmail,
+    skipArtifacts: options.skipArtifacts,
+    multiBranch: true,
   });
-  const { artifacts, artifactContents } = await fetchArtifacts(
-    client,
-    orgId,
-    summary.uuid,
-    !options.skipArtifacts
-  );
-
+  const { conversation, artifacts, bundle } = built;
   const diff = diffConversation(prevState, conversation, artifacts);
 
   // For json mode: bundle is the full snapshot, written as a single JSON file.
   if (options.format === "json") {
-    const bundle = buildGitBundle(conversation, artifacts, artifactContents, {
-      authorName: options.authorName,
-      authorEmail: options.authorEmail,
-      multiBranch: true,
-    });
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(outputPath + ".json", JSON.stringify(bundle, null, 2), "utf-8");
-
-    // For json mode, write state file to the directory containing the json file.
     writeStateFile(stateDir, summary, conversation, artifacts, prevState ? "incremental" : "full");
     return {
       action: prevState ? "incremental" : "full",
       changelogWritten: false,
+      displayName: built.displayName,
     };
   }
-
-  // For files / git mode: build a multi-branch bundle.
-  const bundle = buildGitBundle(conversation, artifacts, artifactContents, {
-    authorName: options.authorName,
-    authorEmail: options.authorEmail,
-    multiBranch: true,
-  });
 
   const isFresh = !fs.existsSync(outputPath);
 
@@ -156,11 +148,9 @@ export async function syncConversation(
       await appendToGit(bundle, outputPath);
     }
   } else {
-    // files mode: stage in tmp, swap.
     await writeFilesMode(bundle, outputPath);
   }
 
-  // After successful swap: write CHANGELOG, .gitignore (git only), state file.
   let changelogWritten = false;
   const section = renderChangelogSection(diff, new Date());
   if (section) {
@@ -183,38 +173,8 @@ export async function syncConversation(
   return {
     action: prevState ? "incremental" : "full",
     changelogWritten,
+    displayName: built.displayName,
   };
-}
-
-async function fetchArtifacts(
-  client: ClaudeSyncClient,
-  orgId: string,
-  convId: string,
-  enabled: boolean
-): Promise<{ artifacts: ArtifactListResponse; artifactContents: Map<string, string | Uint8Array> }> {
-  const empty: ArtifactListResponse = {
-    success: true,
-    files: [],
-    files_metadata: [],
-  };
-  if (!enabled) return { artifacts: empty, artifactContents: new Map() };
-
-  let artifacts = empty;
-  const artifactContents = new Map<string, string | Uint8Array>();
-  try {
-    artifacts = await client.listArtifacts(orgId, convId);
-    for (const meta of artifacts.files_metadata) {
-      try {
-        const content = await client.downloadArtifact(orgId, convId, meta.path);
-        artifactContents.set(meta.path, content);
-      } catch {
-        // Skip failed artifact downloads.
-      }
-    }
-  } catch {
-    // Some conversations don't support artifacts.
-  }
-  return { artifacts, artifactContents };
 }
 
 /**

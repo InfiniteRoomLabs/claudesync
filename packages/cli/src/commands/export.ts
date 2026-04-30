@@ -2,6 +2,8 @@ import { Command } from "commander";
 import { resolve } from "node:path";
 import {
   syncConversation,
+  safeSlug,
+  displayName,
   type ExportFormat,
 } from "@infinite-room-labs/claudesync-core";
 import { createClient, resolveOrgId } from "../utils.js";
@@ -54,14 +56,10 @@ export const exportCommand = new Command("export")
       return; // unreachable after process.exit, helps the type narrower
     }
 
-    const slug = (summary.name ?? "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 60) || `unnamed-${summary.uuid}`;
+    const slug = safeSlug(summary.name, summary.uuid);
     const outputPath = resolve(options.output ?? `./${slug}`);
 
-    const label = (summary.name ?? "").trim() || `<unnamed ${summary.uuid}>`;
+    const label = displayName(summary.name, summary.uuid);
     console.log(`Syncing conversation ${label} (${summary.uuid})`);
     console.log(`  Format: ${options.format}`);
     console.log(`  Output: ${outputPath}`);

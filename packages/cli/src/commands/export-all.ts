@@ -2,9 +2,11 @@ import { Command } from "commander";
 import { resolve } from "node:path";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import {
-  buildGitBundle,
   exportToGit,
+  fetchAndBuild,
   syncConversation,
+  safeSlug,
+  displayName,
   type ExportFormat,
   type GitBundleCommit,
 } from "@infinite-room-labs/claudesync-core";
@@ -59,17 +61,18 @@ export const exportAllCommand = new Command("export-all")
     for (let pi = 0; pi < projects.length; pi++) {
       const project = projects[pi];
       const projectProgress = `[project ${pi + 1}/${projects.length}]`;
-      const projectSlug = slugify(project.name) || `unnamed-${project.uuid}`;
+      const projectLabel = displayName(project.name, project.uuid);
+      const projectSlug = safeSlug(project.name, project.uuid);
       const projectPath = resolve(outputRoot, "projects", projectSlug);
 
       if (options.skipExisting && existsSync(projectPath)) {
-        console.log(`${projectProgress} Skipping (exists): ${project.name}`);
+        console.log(`${projectProgress} Skipping (exists): ${projectLabel}`);
         const projConvs = await client.getProjectConversations(orgId, project.uuid);
         for (const c of projConvs) projectConvUuids.add(c.uuid);
         continue;
       }
 
-      console.log(`${projectProgress} ${project.name}`);
+      console.log(`${projectProgress} ${projectLabel}`);
       const docs = await client.getProjectDocs(orgId, project.uuid);
       const projConvs = await client.getProjectConversations(orgId, project.uuid);
       for (const c of projConvs) projectConvUuids.add(c.uuid);
@@ -84,33 +87,29 @@ export const exportAllCommand = new Command("export-all")
         projectFiles[`knowledge/${safeName}`] = doc.content;
       }
       commits.push({
-        message: `Export project: ${project.name}`,
+        message: `Export project: ${projectLabel}`,
         timestamp: project.created_at,
         author,
         files: projectFiles,
       });
 
-      // Conversations within the project: still go through the full
-      // multi-branch builder, but their files are remapped under
-      // conversations/<slug>/ inside the project repo. --skip-same is not
-      // applied at this layer (the project repo is rebuilt as a unit).
+      // Conversations within the project: route through fetchAndBuild for
+      // identical name/slug fallbacks and tree handling. --skip-same does not
+      // apply at this layer (the project repo is rebuilt as a unit each run).
       for (let ci = 0; ci < projConvs.length; ci++) {
         const convSummary = projConvs[ci];
         const convProgress = `  [${ci + 1}/${projConvs.length}]`;
-        console.log(`${convProgress} ${convSummary.name}`);
 
-        const conversation = await client.getConversation(orgId, convSummary.uuid, { tree: true });
-        const { artifacts, artifactContents } = await fetchArtifacts(
-          client, orgId, convSummary.uuid, !options.skipArtifacts,
-        );
-        const subBundle = buildGitBundle(conversation, artifacts, artifactContents, {
+        const built = await fetchAndBuild(client, orgId, convSummary, {
           authorName: options.authorName,
           authorEmail: options.authorEmail,
+          skipArtifacts: options.skipArtifacts,
           multiBranch: true,
         });
+        console.log(`${convProgress} ${built.displayName}`);
 
-        const convDir = `conversations/${slugify(convSummary.name) || `unnamed-${convSummary.uuid}`}`;
-        for (const commit of subBundle.commits) {
+        const convDir = `conversations/${built.slug}`;
+        for (const commit of built.bundle.commits) {
           const remappedFiles: Record<string, string | Uint8Array> = {};
           for (const [p, content] of Object.entries(commit.files)) {
             remappedFiles[`${convDir}/${p}`] = content;
@@ -122,7 +121,7 @@ export const exportAllCommand = new Command("export-all")
       const bundle = {
         metadata: {
           conversationId: project.uuid,
-          conversationName: project.name,
+          conversationName: projectLabel,
           model: null,
           createdAt: project.created_at,
           exportedAt: new Date().toISOString(),
@@ -133,8 +132,7 @@ export const exportAllCommand = new Command("export-all")
       await writeProjectBundle(bundle, projectPath, options.format);
     }
 
-    // 2. Standalone conversations (not in any project) -- here --skip-same
-    // applies per conversation via the orchestrator.
+    // 2. Standalone conversations -- --skip-same applies here per conversation.
     const standaloneConvs = allConversations.filter(
       (c) => !c.project_uuid && !projectConvUuids.has(c.uuid),
     );
@@ -143,9 +141,11 @@ export const exportAllCommand = new Command("export-all")
     for (let ci = 0; ci < standaloneConvs.length; ci++) {
       const convSummary = standaloneConvs[ci];
       const convProgress = `[conv ${ci + 1}/${standaloneConvs.length}]`;
-      const convLabel = displayName(convSummary.name, convSummary.uuid);
-      const convSlug = slugify(convSummary.name) || `unnamed-${convSummary.uuid}`;
-      const convPath = resolve(outputRoot, "conversations", convSlug);
+      const convPath = resolve(
+        outputRoot,
+        "conversations",
+        safeSlug(convSummary.name, convSummary.uuid),
+      );
 
       try {
         const result = await syncConversation(client, orgId, convSummary, convPath, {
@@ -160,9 +160,10 @@ export const exportAllCommand = new Command("export-all")
           result.action === "skipped" ? "Skipping (same)" :
           result.action === "skipped-existing" ? "Skipping (exists)" :
           result.action === "incremental" ? "Updated" : "Exported";
-        console.log(`${convProgress} ${tag}: ${convLabel}`);
+        console.log(`${convProgress} ${tag}: ${result.displayName}`);
       } catch (err) {
-        console.error(`${convProgress} ERROR exporting ${convLabel}: ${err instanceof Error ? err.message : String(err)}`);
+        const fallback = displayName(convSummary.name, convSummary.uuid);
+        console.error(`${convProgress} ERROR exporting ${fallback}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -171,28 +172,6 @@ export const exportAllCommand = new Command("export-all")
     console.log(`  Projects: ${projects.length}`);
     console.log(`  Standalone conversations: ${standaloneConvs.length}`);
   });
-
-async function fetchArtifacts(
-  client: import("@infinite-room-labs/claudesync-core").ClaudeSyncClient,
-  orgId: string,
-  convId: string,
-  enabled: boolean,
-) {
-  const empty = { success: true, files: [] as string[], files_metadata: [] as { path: string; size: number; content_type: string; created_at: string; custom_metadata: { filename: string } }[] };
-  if (!enabled) return { artifacts: empty, artifactContents: new Map<string, string | Uint8Array>() };
-  const artifactContents = new Map<string, string | Uint8Array>();
-  let artifacts = empty;
-  try {
-    artifacts = await client.listArtifacts(orgId, convId);
-    for (const meta of artifacts.files_metadata) {
-      try {
-        const content = await client.downloadArtifact(orgId, convId, meta.path);
-        artifactContents.set(meta.path, content);
-      } catch {}
-    }
-  } catch {}
-  return { artifacts, artifactContents };
-}
 
 async function writeProjectBundle(
   bundle: { metadata: { conversationId: string; conversationName: string; model: string | null; createdAt: string; exportedAt: string }; commits: GitBundleCommit[] },
@@ -212,27 +191,13 @@ async function writeProjectBundle(
   }
 }
 
-function slugify(name: string | null | undefined): string {
-  return (name ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60);
-}
-
-function displayName(name: string | null | undefined, uuid: string): string {
-  const trimmed = (name ?? "").trim();
-  if (trimmed) return trimmed;
-  return `<unnamed ${uuid}>`;
-}
-
 function buildProjectReadme(
   project: { name: string; uuid: string; description?: string | null; created_at: string; updated_at: string },
   docCount: number,
   convCount: number,
 ): string {
   const lines: string[] = [];
-  lines.push(`# ${project.name}`);
+  lines.push(`# ${displayName(project.name, project.uuid)}`);
   lines.push("");
   if (project.description) {
     lines.push(project.description);
