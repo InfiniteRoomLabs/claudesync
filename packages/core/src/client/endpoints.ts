@@ -9,8 +9,8 @@ export const ENDPOINTS = {
   // Conversations
   conversations: (orgId: string) =>
     `/api/organizations/${orgId}/chat_conversations`,
-  conversation: (orgId: string, chatId: string) =>
-    `/api/organizations/${orgId}/chat_conversations/${chatId}`,
+  conversation: (orgId: string, chatId: string, options?: { tree?: boolean }) =>
+    `/api/organizations/${orgId}/chat_conversations/${chatId}${options?.tree ? "?tree=True" : ""}`,
   search: (orgId: string, query: string, limit: number) =>
     `/api/organizations/${orgId}/conversation/search?query=${encodeURIComponent(query)}&n=${limit}`,
 

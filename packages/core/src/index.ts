@@ -48,11 +48,48 @@ export {
   buildMessageTree,
   findLeafMessages,
   getLinearBranch,
+  getAllBranches,
+  findDivergencePoint,
+  shortLeafLabel,
 } from "./tree/message-tree.js";
 
 // Export engine
 export type { GitBundle, GitBundleCommit } from "./export/types.js";
 export type { BuildGitBundleOptions } from "./export/bundle-builder.js";
 export { buildGitBundle } from "./export/bundle-builder.js";
-export { exportToGit } from "./export/git-exporter.js";
+export { exportToGit, appendToGit } from "./export/git-exporter.js";
 export { formatConversation } from "./export/conversation-formatter.js";
+
+// Sync engine
+export type {
+  SyncState,
+  SyncStateLeaf,
+  SyncStateArtifact,
+} from "./sync/state.js";
+export {
+  STATE_FILENAME,
+  SyncStateSchema,
+  readSyncState,
+  writeSyncState,
+} from "./sync/state.js";
+export type {
+  ConversationDiff,
+  BranchDiff,
+  ArtifactDiff,
+  MetadataDiff,
+} from "./sync/diff.js";
+export { diffConversation } from "./sync/diff.js";
+export {
+  CHANGELOG_FILENAME,
+  renderChangelogSection,
+  appendChangelog,
+} from "./sync/changelog.js";
+export type {
+  ExportFormat,
+  SyncConversationOptions,
+  SyncConversationResult,
+} from "./sync/incremental.js";
+export {
+  syncConversation,
+  isSameByListMetadata,
+} from "./sync/incremental.js";

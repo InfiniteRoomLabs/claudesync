@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `--skip-same` flag on `export` and `export-all`: cheap re-sync that compares list-endpoint `updated_at` + `current_leaf_message_uuid` against a `.claudesync-state.json` sidecar to skip unchanged conversations entirely
+- `--skip-existing` flag on `export` (was `export-all`-only) for parity
+- `?tree=True` opt-in on `getConversation()` exposes orphaned/edited-away message branches that the default response hides
+- Branch capture per output format: `git` mode creates real refs (`main` + `alt-<short-leaf-uuid>`); `files`/`json` modes write alts under `branches/<short-leaf-uuid>/`
+- Per-conversation `CHANGELOG.md` recording datestamped sync events (messages added per branch, artifacts added/changed/removed, metadata renames)
+- `.claudesync-state.json` sidecar (in repo root, `.gitignore`'d) carrying the cursor for the next incremental sync; written every successful run regardless of flags
+- Incremental git mode: re-syncing an existing repo appends new commits per affected branch via the new `appendToGit()` exporter instead of refusing to overwrite
+- Core SDK exports: `getAllBranches`, `findDivergencePoint`, `shortLeafLabel`, `appendToGit`, `syncConversation`, `diffConversation`, `renderChangelogSection`, `appendChangelog`, `readSyncState`, `writeSyncState`
+
+### Changed
+- `--skip-same` and `--skip-existing` are mutually exclusive at the CLI layer (exits 1 with a clear message if both are passed)
+- `export-all` standalone-conversation loop now routes through the shared `syncConversation()` orchestrator
+
+### Fixed
+- Bundle builder no longer drops alternate branches; `multiBranch: true` opt-in emits one commit per leaf with files under `branches/<short>/`
+
 ## [0.4.0] - 2026-04-02
 
 ### Added

@@ -348,4 +348,43 @@ describe("buildGitBundle", () => {
     // Only the conversation commit, no artifact commit
     expect(bundle.commits).toHaveLength(1);
   });
+
+  it("multiBranch mode emits a separate commit per alternate branch", () => {
+    // Tree:    root -> a1 -> h2-v1 (orphan)
+    //                    \-> h2-v2 -> a3-v2 (current)
+    const messages: ChatMessage[] = [
+      makeMessage("root", "sentinel", 0, "human"),
+      makeMessage("a1", "root", 1, "assistant"),
+      makeMessage("h2-v1", "a1", 2, "human"),
+      makeMessage("h2-v2", "a1", 3, "human"),
+      makeMessage("a3-v2", "h2-v2", 4, "assistant"),
+    ];
+    const conversation = makeConversation(messages, "a3-v2");
+
+    const bundle = buildGitBundle(
+      conversation,
+      makeArtifacts([]),
+      new Map(),
+      { multiBranch: true },
+    );
+
+    // 1 main branch commit + 1 alt branch commit (no artifacts).
+    expect(bundle.commits).toHaveLength(2);
+
+    const altCommit = bundle.commits.find((c) =>
+      Object.keys(c.files).some((p) => p.startsWith("branches/")),
+    )!;
+    expect(altCommit).toBeDefined();
+    expect(altCommit.message).toMatch(/^Export branch: alt-/);
+    const altPaths = Object.keys(altCommit.files);
+    expect(altPaths.some((p) => /^branches\/[^/]+\/conversation\.md$/.test(p))).toBe(true);
+    expect(altPaths.some((p) => /^branches\/[^/]+\/README\.md$/.test(p))).toBe(true);
+
+    const mainCommit = bundle.commits.find((c) =>
+      Object.keys(c.files).every((p) => !p.startsWith("branches/")),
+    )!;
+    expect(Object.keys(mainCommit.files)).toEqual(
+      expect.arrayContaining(["conversation.md", "README.md"]),
+    );
+  });
 });

@@ -147,10 +147,11 @@ export class ClaudeSyncClient {
 
   async getConversation(
     orgId: string,
-    chatId: string
+    chatId: string,
+    options?: { tree?: boolean }
   ): Promise<Conversation> {
     const data = await this.request(
-      buildUrl(ENDPOINTS.conversation(orgId, chatId))
+      buildUrl(ENDPOINTS.conversation(orgId, chatId, options))
     );
     return ConversationSchema.parse(data);
   }

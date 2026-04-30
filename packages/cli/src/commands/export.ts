@@ -1,98 +1,93 @@
 import { Command } from "commander";
 import { resolve } from "node:path";
-import { writeFileSync, rmSync } from "node:fs";
 import {
-  ClaudeSyncClient,
-  buildGitBundle,
-  exportToGit,
+  syncConversation,
+  type ExportFormat,
 } from "@infinite-room-labs/claudesync-core";
 import { createClient, resolveOrgId } from "../utils.js";
 
 export const exportCommand = new Command("export")
-  .description("Export a conversation to a git repository")
+  .description("Export a conversation to a git repository, file tree, or JSON")
   .argument("<conversation-id>", "Conversation UUID to export")
   .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
   .option("--output <path>", "Output directory (default: ./<conversation-name>)")
   .option("--format <format>", "Output format: git, json, or files", "git")
   .option("--author-name <name>", "Git author name", "Claude")
   .option("--author-email <email>", "Git author email", "claude@anthropic.com")
+  .option("--skip-artifacts", "Skip downloading artifacts (faster)")
+  .option(
+    "--skip-existing",
+    "Skip if the output directory already exists (no change detection)",
+  )
+  .option(
+    "--skip-same",
+    "Skip if the conversation is unchanged since the last sync. Mutually exclusive with --skip-existing.",
+  )
   .action(async (
     conversationId: string,
     options: {
       org?: string;
       output?: string;
-      format: string;
+      format: ExportFormat;
       authorName: string;
       authorEmail: string;
+      skipArtifacts?: boolean;
+      skipExisting?: boolean;
+      skipSame?: boolean;
     }
   ) => {
+    if (options.skipSame && options.skipExisting) {
+      console.error("error: --skip-same and --skip-existing are mutually exclusive");
+      process.exit(1);
+    }
+
     const { auth, client } = createClient();
     const orgId = await resolveOrgId(auth, options.org);
 
-    // 1. Fetch conversation
-    console.log(`Fetching conversation ${conversationId}...`);
-    const conversation = await client.getConversation(orgId, conversationId);
-    console.log(`  Name: ${conversation.name}`);
-    console.log(`  Messages: ${conversation.chat_messages.length}`);
-
-    // 2. Fetch artifacts
-    console.log("Fetching artifacts...");
-    const artifacts = await client.listArtifacts(orgId, conversationId);
-    console.log(`  Found ${artifacts.files_metadata.length} artifact(s).`);
-
-    // 3. Download artifact contents
-    const artifactContents = new Map<string, string | Uint8Array>();
-    for (const meta of artifacts.files_metadata) {
-      const filename = ClaudeSyncClient.safeFilename(meta.path);
-      console.log(`  Downloading: ${filename}`);
-      const content = await client.downloadArtifact(
-        orgId,
-        conversationId,
-        meta.path
-      );
-      artifactContents.set(meta.path, content);
+    // For --skip-same we need the list-endpoint summary (cheap, no
+    // chat_messages). Always fetch it so the cursor checks are accurate.
+    const summaries = await client.listConversationsAll(orgId);
+    const summary = summaries.find((c) => c.uuid === conversationId);
+    if (!summary) {
+      console.error(`Conversation not found: ${conversationId}`);
+      process.exit(1);
+      return; // unreachable after process.exit, helps the type narrower
     }
 
-    // 4. Build GitBundle
-    console.log("Building export bundle...");
-    const bundle = buildGitBundle(conversation, artifacts, artifactContents, {
+    const slug = summary.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 60);
+    const outputPath = resolve(options.output ?? `./${slug}`);
+
+    console.log(`Syncing conversation ${summary.name} (${summary.uuid})`);
+    console.log(`  Format: ${options.format}`);
+    console.log(`  Output: ${outputPath}`);
+
+    const result = await syncConversation(client, orgId, summary, outputPath, {
+      format: options.format,
       authorName: options.authorName,
       authorEmail: options.authorEmail,
+      skipSame: options.skipSame,
+      skipExisting: options.skipExisting,
+      skipArtifacts: options.skipArtifacts,
     });
 
-    // 5. Output
-    if (options.format === "json") {
-      const outputPath = options.output;
-      if (outputPath) {
-        const fullPath = resolve(outputPath);
-        writeFileSync(fullPath, JSON.stringify(bundle, null, 2), "utf-8");
-        console.log(`\nBundle written to ${fullPath}`);
-      } else {
-        console.log(JSON.stringify(bundle, null, 2));
-      }
-    } else {
-      // git and files formats both use exportToGit for the file tree
-      const slug = conversation.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "")
-        .slice(0, 60);
-      const outputPath = resolve(options.output ?? `./${slug}`);
-
-      console.log(`Exporting to ${options.format === "files" ? "file tree" : "git repository"}: ${outputPath}`);
-      await exportToGit(bundle, outputPath);
-
-      // "files" format: reuse exportToGit for the file tree, then strip .git.
-      // Fast-and-simple approach -- if this becomes a hot path, write a dedicated
-      // flat file exporter that skips git init/stage/commit entirely.
-      if (options.format === "files") {
-        rmSync(resolve(outputPath, ".git"), { recursive: true, force: true });
-      }
-
-      console.log(`\nExport complete!`);
-      console.log(`  ${options.format === "files" ? "Directory" : "Repository"}: ${outputPath}`);
-      if (options.format === "git") {
-        console.log(`  Commits: ${bundle.commits.length}`);
-      }
+    switch (result.action) {
+      case "skipped":
+        console.log(`Skipped (same): ${result.reason}`);
+        break;
+      case "skipped-existing":
+        console.log(`Skipped (exists): ${result.reason}`);
+        break;
+      case "full":
+        console.log(`Initial export complete.`);
+        break;
+      case "incremental":
+        console.log(
+          `Incremental sync complete${result.changelogWritten ? " (CHANGELOG updated)" : ""}.`,
+        );
+        break;
     }
   });

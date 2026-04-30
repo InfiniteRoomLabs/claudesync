@@ -93,3 +93,64 @@ export function getLinearBranch(
   path.reverse();
   return path;
 }
+
+/**
+ * Returns one linear branch (root -> leaf) per leaf in the tree.
+ * Keys are leaf message uuids, values are the message arrays.
+ */
+export function getAllBranches(
+  nodeMap: Map<string, MessageTreeNode>
+): Map<string, ChatMessage[]> {
+  const branches = new Map<string, ChatMessage[]>();
+  for (const leaf of findLeafMessages(nodeMap)) {
+    branches.set(leaf.uuid, getLinearBranch(nodeMap, leaf.uuid));
+  }
+  return branches;
+}
+
+/**
+ * Finds the deepest message uuid shared by both branches (the divergence
+ * point). Branches are expected as root-to-leaf arrays from getLinearBranch().
+ *
+ * Returns undefined if the branches share no ancestor.
+ */
+export function findDivergencePoint(
+  branchA: ChatMessage[],
+  branchB: ChatMessage[]
+): string | undefined {
+  const aUuids = new Set(branchA.map((m) => m.uuid));
+  let last: string | undefined;
+  for (const msg of branchB) {
+    if (aUuids.has(msg.uuid)) {
+      last = msg.uuid;
+    } else {
+      break;
+    }
+  }
+  return last;
+}
+
+/**
+ * Picks a stable, short, unique label for a leaf uuid given a set of all leaf
+ * uuids in the same conversation. Starts at 8 characters and grows until the
+ * prefix is unique within the set. Caps at 16 characters to keep names
+ * readable; throws if even 16 chars collide (extremely unlikely).
+ */
+export function shortLeafLabel(
+  leafUuid: string,
+  allLeafUuids: Iterable<string>
+): string {
+  const others: string[] = [];
+  for (const u of allLeafUuids) {
+    if (u !== leafUuid) others.push(u);
+  }
+  for (let len = 8; len <= 16; len += 4) {
+    const prefix = leafUuid.slice(0, len);
+    if (!others.some((o) => o.startsWith(prefix))) {
+      return prefix;
+    }
+  }
+  throw new Error(
+    `Cannot produce a unique short label for leaf ${leafUuid} within 16 chars`
+  );
+}

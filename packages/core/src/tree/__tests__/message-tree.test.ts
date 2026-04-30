@@ -3,6 +3,9 @@ import {
   buildMessageTree,
   findLeafMessages,
   getLinearBranch,
+  getAllBranches,
+  findDivergencePoint,
+  shortLeafLabel,
 } from "../message-tree.js";
 import type { ChatMessage } from "../../models/types.js";
 
@@ -218,5 +221,75 @@ describe("getLinearBranch", () => {
     const branch = getLinearBranch(tree, "a1");
 
     expect(branch.map((m) => m.uuid)).toEqual(["root", "a1"]);
+  });
+});
+
+describe("getAllBranches", () => {
+  it("returns one branch per leaf in a forked tree", () => {
+    const messages: ChatMessage[] = [
+      makeMessage("root", "sentinel", 0, "human"),
+      makeMessage("a1", "root", 1, "assistant"),
+      makeMessage("h2-v1", "a1", 2, "human"),
+      makeMessage("h2-v2", "a1", 3, "human"),
+      makeMessage("a3-v2", "h2-v2", 4, "assistant"),
+    ];
+    const tree = buildMessageTree(messages);
+    const branches = getAllBranches(tree);
+    expect(branches.size).toBe(2);
+    expect(branches.has("h2-v1")).toBe(true);
+    expect(branches.has("a3-v2")).toBe(true);
+    expect(branches.get("h2-v1")!.map((m) => m.uuid)).toEqual([
+      "root",
+      "a1",
+      "h2-v1",
+    ]);
+    expect(branches.get("a3-v2")!.map((m) => m.uuid)).toEqual([
+      "root",
+      "a1",
+      "h2-v2",
+      "a3-v2",
+    ]);
+  });
+});
+
+describe("findDivergencePoint", () => {
+  it("finds the deepest shared ancestor between two branches", () => {
+    const messages: ChatMessage[] = [
+      makeMessage("root", "sentinel", 0, "human"),
+      makeMessage("a1", "root", 1, "assistant"),
+      makeMessage("h2-v1", "a1", 2, "human"),
+      makeMessage("h2-v2", "a1", 3, "human"),
+      makeMessage("a3-v2", "h2-v2", 4, "assistant"),
+    ];
+    const tree = buildMessageTree(messages);
+    const v1 = getLinearBranch(tree, "h2-v1");
+    const v2 = getLinearBranch(tree, "a3-v2");
+    expect(findDivergencePoint(v1, v2)).toBe("a1");
+  });
+
+  it("returns undefined when branches share no ancestor", () => {
+    const m1 = makeMessage("a", "sentinel", 0);
+    const m2 = makeMessage("b", "sentinel", 1);
+    expect(findDivergencePoint([m1], [m2])).toBeUndefined();
+  });
+});
+
+describe("shortLeafLabel", () => {
+  it("returns 8-char prefix when unique", () => {
+    expect(shortLeafLabel("019ddeab-d142", ["019ddea7-ef2a"])).toBe("019ddeab");
+  });
+
+  it("falls back to 12 chars when 8 chars collide", () => {
+    expect(
+      shortLeafLabel("019ddeab-d142-7b87-8a6a", [
+        "019ddeab-7716-7019-93f1",
+      ]),
+    ).toBe("019ddeab-d14");
+  });
+
+  it("throws when no unique prefix exists within 16 chars", () => {
+    expect(() =>
+      shortLeafLabel("aaaa-bbbb-cccc-dddd", ["aaaa-bbbb-cccc-dddd-shared"]),
+    ).toThrow();
   });
 });
