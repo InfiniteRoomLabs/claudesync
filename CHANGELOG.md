@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-04-30
+
+### Fixed
+- `export-all` printed empty `Updated:` / `Exported:` log line when a conversation had a null/blank name. Now logs `<unnamed <uuid>>` and writes to `unnamed-<uuid>/` so multiple unnamed conversations no longer collide on the same directory.
+
 ## [0.5.0] - 2026-04-30
 
 ### Added

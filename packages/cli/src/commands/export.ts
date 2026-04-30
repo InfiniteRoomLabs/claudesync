@@ -54,14 +54,15 @@ export const exportCommand = new Command("export")
       return; // unreachable after process.exit, helps the type narrower
     }
 
-    const slug = summary.name
+    const slug = (summary.name ?? "")
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "")
-      .slice(0, 60);
+      .slice(0, 60) || `unnamed-${summary.uuid}`;
     const outputPath = resolve(options.output ?? `./${slug}`);
 
-    console.log(`Syncing conversation ${summary.name} (${summary.uuid})`);
+    const label = (summary.name ?? "").trim() || `<unnamed ${summary.uuid}>`;
+    console.log(`Syncing conversation ${label} (${summary.uuid})`);
     console.log(`  Format: ${options.format}`);
     console.log(`  Output: ${outputPath}`);
 

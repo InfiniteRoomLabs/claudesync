@@ -59,7 +59,7 @@ export const exportAllCommand = new Command("export-all")
     for (let pi = 0; pi < projects.length; pi++) {
       const project = projects[pi];
       const projectProgress = `[project ${pi + 1}/${projects.length}]`;
-      const projectSlug = slugify(project.name);
+      const projectSlug = slugify(project.name) || `unnamed-${project.uuid}`;
       const projectPath = resolve(outputRoot, "projects", projectSlug);
 
       if (options.skipExisting && existsSync(projectPath)) {
@@ -109,7 +109,7 @@ export const exportAllCommand = new Command("export-all")
           multiBranch: true,
         });
 
-        const convDir = `conversations/${slugify(convSummary.name)}`;
+        const convDir = `conversations/${slugify(convSummary.name) || `unnamed-${convSummary.uuid}`}`;
         for (const commit of subBundle.commits) {
           const remappedFiles: Record<string, string | Uint8Array> = {};
           for (const [p, content] of Object.entries(commit.files)) {
@@ -143,7 +143,8 @@ export const exportAllCommand = new Command("export-all")
     for (let ci = 0; ci < standaloneConvs.length; ci++) {
       const convSummary = standaloneConvs[ci];
       const convProgress = `[conv ${ci + 1}/${standaloneConvs.length}]`;
-      const convSlug = slugify(convSummary.name);
+      const convLabel = displayName(convSummary.name, convSummary.uuid);
+      const convSlug = slugify(convSummary.name) || `unnamed-${convSummary.uuid}`;
       const convPath = resolve(outputRoot, "conversations", convSlug);
 
       try {
@@ -159,9 +160,9 @@ export const exportAllCommand = new Command("export-all")
           result.action === "skipped" ? "Skipping (same)" :
           result.action === "skipped-existing" ? "Skipping (exists)" :
           result.action === "incremental" ? "Updated" : "Exported";
-        console.log(`${convProgress} ${tag}: ${convSummary.name}`);
+        console.log(`${convProgress} ${tag}: ${convLabel}`);
       } catch (err) {
-        console.error(`${convProgress} ERROR exporting ${convSummary.name}: ${err instanceof Error ? err.message : String(err)}`);
+        console.error(`${convProgress} ERROR exporting ${convLabel}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -211,12 +212,18 @@ async function writeProjectBundle(
   }
 }
 
-function slugify(name: string): string {
-  return name
+function slugify(name: string | null | undefined): string {
+  return (name ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 60);
+}
+
+function displayName(name: string | null | undefined, uuid: string): string {
+  const trimmed = (name ?? "").trim();
+  if (trimmed) return trimmed;
+  return `<unnamed ${uuid}>`;
 }
 
 function buildProjectReadme(
