@@ -23,6 +23,7 @@ import {
 import { buildMessageTree, findLeafMessages } from "../tree/message-tree.js";
 import { fetchAndBuild } from "./fetch.js";
 import { displayName as toDisplayName } from "../util/naming.js";
+import { replaceWithPreserve } from "./files-mode.js";
 
 export type ExportFormat = "git" | "files" | "json";
 
@@ -36,6 +37,14 @@ export interface SyncConversationOptions {
   skipExisting?: boolean;
   /** Don't fetch artifacts. */
   skipArtifacts?: boolean;
+  /**
+   * Glob patterns (POSIX-style) of locally-added files inside the
+   * conversation directory that must survive a re-sync in `files` mode.
+   * Matched against paths relative to the conversation directory. The
+   * CHANGELOG.md sidecar is always preserved regardless of this list.
+   * Examples: ["INDEX.md", "notes/**", "*.local.md"].
+   */
+  preserve?: string[];
 }
 
 export interface SyncConversationResult {
@@ -148,7 +157,7 @@ export async function syncConversation(
       await appendToGit(bundle, outputPath);
     }
   } else {
-    await writeFilesMode(bundle, outputPath);
+    await writeFilesMode(bundle, outputPath, options.preserve ?? []);
   }
 
   let changelogWritten = false;
@@ -180,50 +189,28 @@ export async function syncConversation(
 /**
  * Files mode: replay bundle into outputPath via the same tmp+swap pattern as
  * exportToGit, but strip .git at the end.
+ *
+ * Preservation: every re-sync rebuilds the directory from scratch. Files that
+ * the user (or a downstream tool) added locally would be wiped without
+ * explicit rescue. We always preserve `CHANGELOG.md` (appended to by the
+ * sync), drop the prior `.claudesync-state.json` (rewritten by the caller),
+ * and copy back anything else in the stash matching the `preserve` glob list.
  */
 async function writeFilesMode(
   bundle: import("../export/types.js").GitBundle,
-  outputPath: string
+  outputPath: string,
+  preserve: readonly string[]
 ): Promise<void> {
-  // Re-use exportToGit then strip .git. We need fresh tmp each time since
-  // exportToGit refuses to write into an existing path.
-  const stash = outputPath + ".prev";
-  const isUpdate = fs.existsSync(outputPath);
-  if (isUpdate) {
-    if (fs.existsSync(stash)) {
-      fs.rmSync(stash, { recursive: true, force: true });
-    }
-    fs.renameSync(outputPath, stash);
-  }
-
-  try {
-    await exportToGit(bundle, outputPath);
-    rmSync(path.join(outputPath, ".git"), { recursive: true, force: true });
-    // Preserve CHANGELOG.md from the previous tree (we'll append to it after).
-    if (isUpdate && fs.existsSync(path.join(stash, CHANGELOG_FILENAME))) {
-      fs.copyFileSync(
-        path.join(stash, CHANGELOG_FILENAME),
-        path.join(outputPath, CHANGELOG_FILENAME)
-      );
-    }
-    if (isUpdate && fs.existsSync(path.join(stash, STATE_FILENAME))) {
-      // State file gets rewritten by caller; nothing to preserve.
-    }
-    if (isUpdate) {
-      fs.rmSync(stash, { recursive: true, force: true });
-    }
-  } catch (error) {
-    // Restore original on failure.
-    if (isUpdate) {
-      if (fs.existsSync(outputPath)) {
-        fs.rmSync(outputPath, { recursive: true, force: true });
-      }
-      if (fs.existsSync(stash)) {
-        fs.renameSync(stash, outputPath);
-      }
-    }
-    throw error;
-  }
+  await replaceWithPreserve({
+    outputPath,
+    writeFresh: async () => {
+      await exportToGit(bundle, outputPath);
+      rmSync(path.join(outputPath, ".git"), { recursive: true, force: true });
+    },
+    alwaysPreserve: [CHANGELOG_FILENAME],
+    alwaysDrop: [STATE_FILENAME],
+    preserveGlobs: preserve,
+  });
 }
 
 function ensureGitignore(repoDir: string): void {

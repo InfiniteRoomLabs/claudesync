@@ -1,12 +1,13 @@
 import { Command } from "commander";
 import { resolve } from "node:path";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import {
   exportToGit,
   fetchAndBuild,
   syncConversation,
   safeSlug,
   displayName,
+  replaceWithPreserve,
   type ExportFormat,
   type GitBundleCommit,
 } from "@infinite-room-labs/claudesync-core";
@@ -28,6 +29,12 @@ export const exportAllCommand = new Command("export-all")
     "--skip-same",
     "Skip conversations unchanged since the last sync (uses .claudesync-state.json sidecar). Mutually exclusive with --skip-existing.",
   )
+  .option(
+    "--preserve <glob>",
+    "Glob (POSIX-style, relative to each conversation dir) of locally-added files to keep across re-syncs in --format files. Repeatable. CHANGELOG.md is always preserved. Examples: --preserve INDEX.md --preserve 'notes/**'",
+    (value: string, previous: string[] = []) => previous.concat(value),
+    [] as string[],
+  )
   .action(async (options: {
     org?: string;
     output?: string;
@@ -37,6 +44,7 @@ export const exportAllCommand = new Command("export-all")
     skipArtifacts?: boolean;
     skipExisting?: boolean;
     skipSame?: boolean;
+    preserve: string[];
   }) => {
     if (options.skipSame && options.skipExisting) {
       console.error("error: --skip-same and --skip-existing are mutually exclusive");
@@ -129,7 +137,7 @@ export const exportAllCommand = new Command("export-all")
         commits,
       };
 
-      await writeProjectBundle(bundle, projectPath, options.format);
+      await writeProjectBundle(bundle, projectPath, options.format, options.preserve);
     }
 
     // 2. Standalone conversations -- --skip-same applies here per conversation.
@@ -155,6 +163,7 @@ export const exportAllCommand = new Command("export-all")
           skipSame: options.skipSame,
           skipExisting: options.skipExisting,
           skipArtifacts: options.skipArtifacts,
+          preserve: options.preserve,
         });
         const tag =
           result.action === "skipped" ? "Skipping (same)" :
@@ -177,18 +186,26 @@ async function writeProjectBundle(
   bundle: { metadata: { conversationId: string; conversationName: string; model: string | null; createdAt: string; exportedAt: string }; commits: GitBundleCommit[] },
   outputPath: string,
   format: ExportFormat,
+  preserve: readonly string[],
 ): Promise<void> {
   if (format === "json") {
     writeFileSync(outputPath + ".json", JSON.stringify(bundle, null, 2), "utf-8");
     return;
   }
-  if (existsSync(outputPath)) {
-    rmSync(outputPath, { recursive: true, force: true });
-  }
-  await exportToGit(bundle, outputPath);
-  if (format === "files") {
-    rmSync(resolve(outputPath, ".git"), { recursive: true, force: true });
-  }
+  // Files / git mode: rebuild the project tree from scratch, but route through
+  // replaceWithPreserve so locally-added files (INDEX.md at project + nested
+  // conversation scope, hand-written notes, etc.) survive the re-sync.
+  await replaceWithPreserve({
+    outputPath,
+    writeFresh: async () => {
+      await exportToGit(bundle, outputPath);
+      if (format === "files") {
+        const { rmSync } = await import("node:fs");
+        rmSync(resolve(outputPath, ".git"), { recursive: true, force: true });
+      }
+    },
+    preserveGlobs: preserve,
+  });
 }
 
 function buildProjectReadme(

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-12
+
+### Added
+- `--preserve <glob>` repeatable flag on `export` and `export-all`. Preserves locally-added files inside the conversation/project directory across re-syncs in `--format files`. Pattern is a POSIX-style glob (single-segment `*`, multi-segment `**`, `?`, `[]` classes — no brace expansion, no extglob) matched against paths relative to the directory being rewritten. `CHANGELOG.md` continues to be preserved unconditionally. Examples: `--preserve INDEX.md`, `--preserve 'notes/**'`, `--preserve '*.local.md'`.
+- New core export `replaceWithPreserve()` — the stash-and-rebuild primitive that powers preservation. Available to SDK consumers that build their own file-mode exporters.
+- New core export `walkRelative()` — generator that yields POSIX-relative paths under a root.
+- New core exports `matchGlob` / `matchAnyGlob` / `compileGlob` — zero-dep glob matcher safe for relative path matching. Not a full minimatch replacement.
+
+### Fixed
+- **`export-all` no longer wipes locally-added files inside project directories.** `writeProjectBundle()` previously did an unconditional `rmSync(outputPath)` before writing, deleting any non-bundle file (downstream indexer output, hand-written notes, etc.). Both the standalone-conversation path (`writeFilesMode`) and the project path (`writeProjectBundle`) now route through the new `replaceWithPreserve` helper. Without `--preserve` flags the only behavior change is that the rescue mechanism now exists.
+
+### Changed
+- `SyncConversationOptions` gained an optional `preserve?: string[]` field.
+
 ## [0.5.2] - 2026-04-30
 
 ### Changed

@@ -25,6 +25,12 @@ export const exportCommand = new Command("export")
     "--skip-same",
     "Skip if the conversation is unchanged since the last sync. Mutually exclusive with --skip-existing.",
   )
+  .option(
+    "--preserve <glob>",
+    "Glob (POSIX, relative to the conversation dir) of locally-added files to keep across re-syncs in --format files. Repeatable. CHANGELOG.md is always preserved.",
+    (value: string, previous: string[] = []) => previous.concat(value),
+    [] as string[],
+  )
   .action(async (
     conversationId: string,
     options: {
@@ -36,6 +42,7 @@ export const exportCommand = new Command("export")
       skipArtifacts?: boolean;
       skipExisting?: boolean;
       skipSame?: boolean;
+      preserve: string[];
     }
   ) => {
     if (options.skipSame && options.skipExisting) {
@@ -71,6 +78,7 @@ export const exportCommand = new Command("export")
       skipSame: options.skipSame,
       skipExisting: options.skipExisting,
       skipArtifacts: options.skipArtifacts,
+      preserve: options.preserve,
     });
 
     switch (result.action) {

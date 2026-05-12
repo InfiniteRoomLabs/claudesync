@@ -1,0 +1,133 @@
+/**
+ * Stash-and-rebuild file-writing primitive shared between conversation and
+ * project export paths.
+ *
+ * Both code paths produce a fresh, claudesync-canonical directory tree on
+ * every re-sync. Without explicit rescue, anything the user added locally
+ * (INDEX.md from a downstream indexer, hand-written notes, etc.) would be
+ * wiped on every run.
+ *
+ * This helper:
+ *   1. Renames the existing outputPath to a `<outputPath>.prev` stash.
+ *   2. Runs the caller-supplied `writeFresh` to populate a clean outputPath.
+ *   3. Walks the stash and copies back files that either equal an entry in
+ *      `alwaysPreserve` or match any glob in `preserveGlobs`.
+ *   4. Removes the stash on success, restores it on failure.
+ *
+ * Copies are non-destructive: if writeFresh already produced a file at the
+ * same relative path, the bundle wins and the stash copy is skipped. This
+ * protects against a user pattern accidentally clobbering conversation.md
+ * or README.md.
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+import { matchAnyGlob } from "../util/glob.js";
+
+export interface ReplaceWithPreserveOptions {
+  /** Final destination directory. May or may not exist. */
+  outputPath: string;
+  /** Callback that populates `outputPath` from scratch. Must create the dir. */
+  writeFresh: () => Promise<void>;
+  /**
+   * Files preserved by exact relative-path match. CHANGELOG.md is the
+   * canonical example; the changelog is appended to by the sync.
+   */
+  alwaysPreserve?: readonly string[];
+  /**
+   * Files dropped by exact relative-path match, even if they would otherwise
+   * match `preserveGlobs`. `.claudesync-state.json` is the canonical example;
+   * the caller rewrites it after this returns.
+   */
+  alwaysDrop?: readonly string[];
+  /**
+   * Glob patterns (POSIX) of locally-added files to preserve. Matched against
+   * paths relative to `outputPath`. See `util/glob.ts` for syntax.
+   */
+  preserveGlobs?: readonly string[];
+}
+
+export async function replaceWithPreserve(
+  opts: ReplaceWithPreserveOptions
+): Promise<void> {
+  const {
+    outputPath,
+    writeFresh,
+    alwaysPreserve = [],
+    alwaysDrop = [],
+    preserveGlobs = [],
+  } = opts;
+
+  const stash = outputPath + ".prev";
+  const isUpdate = fs.existsSync(outputPath);
+  if (isUpdate) {
+    if (fs.existsSync(stash)) {
+      fs.rmSync(stash, { recursive: true, force: true });
+    }
+    fs.renameSync(outputPath, stash);
+  }
+
+  try {
+    await writeFresh();
+    if (isUpdate) {
+      restoreFromStash(stash, outputPath, alwaysPreserve, alwaysDrop, preserveGlobs);
+      fs.rmSync(stash, { recursive: true, force: true });
+    }
+  } catch (error) {
+    if (isUpdate) {
+      if (fs.existsSync(outputPath)) {
+        fs.rmSync(outputPath, { recursive: true, force: true });
+      }
+      if (fs.existsSync(stash)) {
+        fs.renameSync(stash, outputPath);
+      }
+    }
+    throw error;
+  }
+}
+
+function restoreFromStash(
+  stash: string,
+  outputPath: string,
+  alwaysPreserve: readonly string[],
+  alwaysDrop: readonly string[],
+  preserveGlobs: readonly string[]
+): void {
+  const dropSet = new Set(alwaysDrop);
+  const preserveSet = new Set(alwaysPreserve);
+  for (const rel of walkRelative(stash)) {
+    if (dropSet.has(rel)) continue;
+    const shouldPreserve =
+      preserveSet.has(rel) || matchAnyGlob(rel, preserveGlobs);
+    if (!shouldPreserve) continue;
+
+    const dest = path.join(outputPath, rel);
+    if (fs.existsSync(dest)) continue; // bundle wins
+
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(path.join(stash, rel), dest);
+  }
+}
+
+/** Yield every file path under root, as POSIX-separated paths relative to root. */
+export function* walkRelative(root: string): Generator<string> {
+  const stack: string[] = [""];
+  while (stack.length > 0) {
+    const rel = stack.pop()!;
+    const abs = rel === "" ? root : path.join(root, rel);
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(abs, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        stack.push(childRel);
+      } else if (entry.isFile() || entry.isSymbolicLink()) {
+        yield childRel;
+      }
+    }
+  }
+}
