@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `SyncConversationOptions` gained an optional `preserve?: string[]` field.
+- Docker image now pins `pnpm@10.32.1` instead of `pnpm@latest` for reproducible builds.
 
 ## [0.5.2] - 2026-04-30
 
