@@ -59,6 +59,7 @@ Phase 1 deliverables: Core SDK + MCP Server (3 tools: list_orgs, list_convos, ge
 ## Conventions
 
 ### Node/TypeScript
+- **Run `nvm use` before any Node work** (node/pnpm/vitest/tsc/build/scripts). This repo pins Node 24 via `.nvmrc`, but the agent's non-interactive Bash shell defaults to system Node v20 -- `BASH_ENV`/direnv autoswitching does not stick because the harness re-pins `PATH` after startup. So prefix node commands in a compound, e.g. `nvm use && pnpm test`. (Interactive fish auto-switches; this note is for the agent.)
 - Use `pnpm` for package management
 - ESM modules (`"type": "module"`)
 - Strict TypeScript (`strict: true`, no `any`)
