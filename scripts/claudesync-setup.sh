@@ -202,6 +202,26 @@ print((d.get("Descriptor") or {}).get("digest", ""))
     printf '%s@%s' "${_image}" "${_digest}"
 }
 
+# Pre-pull a ref. If the daemon refuses tag pulls (digest-enforcing posture),
+# auto-enable --pin-digest for the rest of the run and signal the caller to
+# re-resolve to a digest. Returns 0 if pulled (or pinning not needed),
+# 1 if the caller must re-resolve + retry under PIN_DIGEST.
+pull_or_detect() {
+    _r="$1"
+    if [ "${DRY_RUN}" = "1" ]; then info "[dry-run] docker pull ${_r}"; return 0; fi
+    _err="$(docker pull "${_r}" 2>&1 1>/dev/null)" && return 0
+    case "${_err}" in
+        *@sha256*|*[Dd]igest*|*"content trust"*|*DOCKER_CONTENT_TRUST*)
+            if [ "${PIN_DIGEST}" != "1" ]; then
+                warn "Docker refuses tag pulls (digest-enforcing) -- enabling --pin-digest automatically."
+                PIN_DIGEST=1
+                return 1
+            fi
+            warn "Could not pre-pull ${_r} (will pull on first use)."; return 0 ;;
+        *) warn "Could not pre-pull ${_r} (will pull on first use)."; return 0 ;;
+    esac
+}
+
 # ---------------------------------------------------------------------------
 # Confirm prompt (honors --force)
 # ---------------------------------------------------------------------------
@@ -393,8 +413,11 @@ remove_sync_block() {
 install_synchronizer() {
     _ref="$(resolve_ref "${IMAGE_SYNC}" "${VER_SYNC}")"
     info "Installing synchronizer (image ref: ${_ref}) ..."
-    run docker pull "${IMAGE_SYNC}:${VER_SYNC:-latest}" >/dev/null 2>&1 || \
-        warn "Could not pre-pull ${IMAGE_SYNC}:${VER_SYNC:-latest} (will pull on first use)."
+    if ! pull_or_detect "${_ref}"; then
+        _ref="$(resolve_ref "${IMAGE_SYNC}" "${VER_SYNC}")"   # PIN_DIGEST now on -> digest
+        info "Re-resolved to ${_ref}"
+        run docker pull "${_ref}" >/dev/null 2>&1 || warn "Could not pre-pull ${_ref} (will pull on first use)."
+    fi
 
     _rc="$(detect_rc)"
     if [ "${_rc}" = "fish" ]; then
@@ -465,8 +488,11 @@ uninstall_synchronizer() {
 install_mcp() {
     _ref="$(resolve_ref "${IMAGE_MCP}" "${VER_MCP}")"
     info "Installing MCP wrapper (image ref: ${_ref}) ..."
-    run docker pull "${IMAGE_MCP}:${VER_MCP:-latest}" >/dev/null 2>&1 || \
-        warn "Could not pre-pull ${IMAGE_MCP}:${VER_MCP:-latest} (will pull on first use)."
+    if ! pull_or_detect "${_ref}"; then
+        _ref="$(resolve_ref "${IMAGE_MCP}" "${VER_MCP}")"
+        info "Re-resolved to ${_ref}"
+        run docker pull "${_ref}" >/dev/null 2>&1 || warn "Could not pre-pull ${_ref} (will pull on first use)."
+    fi
     run mkdir -p "${BIN_DIR}"
 
     if [ "${DRY_RUN}" = "1" ]; then

@@ -143,6 +143,24 @@ function Resolve-Ref {
     return "${Image}@${digest}"
 }
 
+# Pre-pull a ref. If the daemon refuses tag pulls (digest-enforcing), auto-enable
+# -PinDigest for the rest of the run and return $false (caller re-resolves + retries).
+function Invoke-PullOrDetect {
+    param([string]$Ref)
+    if ($DryRun) { Write-DryRun "docker pull $Ref"; return $true }
+    $err = (docker pull $Ref 2>&1 | Out-String)
+    if ($LASTEXITCODE -eq 0) { return $true }
+    if ($err -match '(?i)@sha256|digest|content trust|DOCKER_CONTENT_TRUST') {
+        if (-not $PinDigest) {
+            Write-Warn "Docker refuses tag pulls (digest-enforcing) -- enabling -PinDigest automatically."
+            $script:PinDigest = $true
+            return $false
+        }
+    }
+    Write-Warn "Could not pre-pull $Ref (will pull on first use)."
+    return $true
+}
+
 function Copy-FromImage {
     param([string]$ImageTag, [string]$ImagePath, [string]$Dest)
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
@@ -232,8 +250,11 @@ function Remove-ProfileBlock {
 function Install-Synchronizer {
     $ref = Resolve-Ref $ImageSync $SynchronizerVersion
     Write-Info "Installing synchronizer (image ref: $ref) ..."
-    if ($DryRun) { Write-DryRun "docker pull ${ImageSync}:$(if($SynchronizerVersion){$SynchronizerVersion}else{'latest'})" }
-    else { docker pull "${ImageSync}:$(if($SynchronizerVersion){$SynchronizerVersion}else{'latest'})" 2>$null | Out-Null }
+    if (-not (Invoke-PullOrDetect $ref)) {
+        $ref = Resolve-Ref $ImageSync $SynchronizerVersion
+        Write-Info "Re-resolved to $ref"
+        if (-not $DryRun) { docker pull $ref 2>$null | Out-Null }
+    }
 
     $profileDir = Split-Path $PROFILE -Parent
     Ensure-Dir $profileDir
@@ -270,8 +291,11 @@ function Remove-CompletionBlock {
 function Install-Mcp {
     $ref = Resolve-Ref $ImageMcp $McpVersion
     Write-Info "Installing MCP wrapper (image ref: $ref) ..."
-    if ($DryRun) { Write-DryRun "docker pull ${ImageMcp}:$(if($McpVersion){$McpVersion}else{'latest'})" }
-    else { docker pull "${ImageMcp}:$(if($McpVersion){$McpVersion}else{'latest'})" 2>$null | Out-Null }
+    if (-not (Invoke-PullOrDetect $ref)) {
+        $ref = Resolve-Ref $ImageMcp $McpVersion
+        Write-Info "Re-resolved to $ref"
+        if (-not $DryRun) { docker pull $ref 2>$null | Out-Null }
+    }
     Ensure-Dir $DataDir
 
     $ps1 = @'
