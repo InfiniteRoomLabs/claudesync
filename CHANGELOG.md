@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-27
+
+### Added
+- **Cross-platform cookie harvesting** via a host-side broker built on the MIT
+  [rookie](https://github.com/thewh1teagle/rookie) CLI (auto-downloaded,
+  SHA256-pinned). Reads the `claude.ai` `sessionKey` from Firefox / Chrome / Edge
+  / Brave (and Safari on macOS), with a Claude Desktop best-effort fallback and a
+  manual `CLAUDE_AI_COOKIE` escape hatch. Harvesting runs host-side because the
+  container can't reach the OS keychain. See `docs/cookie-harvesting.md` and
+  `docs/claude-desktop-linux.md`.
+- **`claudesync-setup` management CLI** (`install` / `update` / `uninstall`) with
+  full PowerShell parity. Components `--synchronizer` / `--mcp` / `--broker`
+  (each with independent `=VERSION`), `--dry-run`, `--force`, `--target` for MCP
+  client config (claude-code / claude-desktop / mcp-json), and `--pin-digest`
+  (resolve image tags to `@sha256` and pin wrappers).
+- **Auto digest-pinning**: when the Docker daemon refuses tag pulls (digest- or
+  content-trust-enforcing), `--pin-digest` is enabled automatically and persisted.
+- Tab-completions for `claudesync-setup` (bash / zsh / fish / PowerShell).
+- Installers ship host scripts into the Docker images and extract them via
+  `docker cp` (version-locked; GitHub-raw is a loud fallback).
+
+### Changed
+- `install.{sh,ps1}` are now thin bootstraps that fetch and run `claudesync-setup`;
+  `install-mcp.{sh,ps1}` and `uninstall.{sh,ps1}` are back-compat shims.
+- `sqlite3` is no longer required for cookie reading (only the Claude-Desktop-on-Linux fallback uses it).
+
+### Notes
+- Windows Chrome/Edge >= 127 use App-Bound Encryption, which no clean OSS tool can
+  decrypt -- use Firefox or set `CLAUDE_AI_COOKIE` manually. macOS/Linux unaffected.
+
 ## [0.6.1] - 2026-05-27
 
 ### Fixed

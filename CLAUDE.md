@@ -90,6 +90,29 @@ Firefox/manual. See `docs/cookie-harvesting.md` and `docs/claude-desktop-linux.m
 - Never rewrite shared branch history
 - Never commit secrets or credentials
 
+## Cutting a Release
+
+Docker images and npm packages are published **only on a `v*` git tag** -- pushing
+`main` runs CI (lint/test) but never publishes. `.github/workflows/publish-docker.yml`
+and `publish-npm.yml` both trigger on `push: tags: "v*"`.
+
+To release:
+
+1. Bump the version in all three packages to the same value:
+   `packages/core/package.json`, `packages/cli/package.json`,
+   `packages/mcp-server/package.json`. (Internal deps use `workspace:*`, which
+   pnpm resolves to the real version at publish -- no dep-range edits needed.)
+2. `nvm use && pnpm install` (the global hardening enforces deps-before-run), then
+   `pnpm build && pnpm test` to de-risk the publish.
+3. Add a `## [X.Y.Z]` entry to `CHANGELOG.md`.
+4. Commit, then tag: `git tag vX.Y.Z`.
+5. **Push the tag to the `github` remote** (not just `origin`/Gitea -- GitHub
+   Actions only fire on the github remote): `git push github main && git push github vX.Y.Z`.
+
+The tag build produces images tagged `X.Y.Z`, `X.Y`, `X`, `latest`, and the commit
+sha, on both ghcr.io and Docker Hub, with the host-side wrapper scripts baked into
+`/opt/claudesync/host/`. npm publishes via OIDC trusted publishing (no token).
+
 ## Spec Kitty
 
 This repo uses Spec Kitty for structured development.
