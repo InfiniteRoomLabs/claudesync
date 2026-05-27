@@ -1,163 +1,189 @@
 # ClaudeSync
 
-Unofficial TypeScript SDK wrapping the [claude.ai](https://claude.ai) web API. Export your conversations, artifacts, and project knowledge as git repositories.
+Unofficial TypeScript SDK + tooling for the [claude.ai](https://claude.ai) web API. Export your conversations, artifacts, and project knowledge as git repositories -- from the CLI or as an MCP server.
 
-> **Your data, your way.** ClaudeSync is a community tool. It is not affiliated with or endorsed by Anthropic. Use at your own risk -- accessing the undocumented web API may violate Anthropic's Terms of Service and could result in account suspension.
+> **Your data, your way.** ClaudeSync is a community tool, not affiliated with or endorsed by Anthropic. Accessing the undocumented web API may violate Anthropic's Terms of Service and could result in account suspension. Use at your own risk.
 
-## Quick Install
+---
 
-### CLI (bash, zsh, fish)
+## Install
 
 ```sh
+# Unix (bash, zsh, fish) -- installs everything: CLI + MCP server + cookie broker
 curl -fsSL https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main/scripts/install.sh | sh
 ```
 
-### CLI (PowerShell / Windows)
-
 ```powershell
+# Windows PowerShell (5.1 or 7+)
 irm https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main/scripts/install.ps1 | iex
 ```
 
-### MCP Server (Claude Code / Claude Desktop)
+Everything runs in Docker; the installer only places thin host-side wrappers and a
+cookie reader. The one-liner bootstraps **`claudesync-setup`** (a small manager)
+onto your PATH and runs it. After that, manage everything with `claudesync-setup`.
+
+> **Requires Docker.** Node/pnpm are only needed for development -- users run the
+> published images.
+
+---
+
+## Managing the install
 
 ```sh
-# Unix
-curl -fsSL https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main/scripts/install-mcp.sh | sh
-
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main/scripts/install-mcp.ps1 | iex
+claudesync-setup                       # install everything, latest
+claudesync-setup install 0.6.1         # pin all components to 0.6.1
+claudesync-setup install --mcp --synchronizer=0.6.1   # choose components / per-component versions
+claudesync-setup update                # re-install at latest (honors recorded pins)
+claudesync-setup uninstall --mcp       # remove just the MCP wrapper
+claudesync-setup uninstall             # remove everything
 ```
 
-### Uninstall
+| | |
+|---|---|
+| **Subcommands** | `install` (default) / `update` / `uninstall` |
+| **Components** (omit = all) | `--synchronizer[=VER]` (the `claudesync` CLI) / `--mcp[=VER]` (MCP server) / `--broker` (host cookie reader only) |
+| **Versions** | positional `VERSION` is a default applied per component; `--mcp=VER` overrides it. Components resolve against their **own** image and are not assumed in lockstep. |
+| **`--target`** | which MCP client to configure: `claude-code` / `claude-desktop` / `mcp-json` (omit = prompt; non-interactive skips with instructions) |
+| **`--force`** | don't prompt before replacing files |
+| **`--dry-run`** | print every action, change nothing |
+| **`--pin-digest`** | resolve image tags to `@sha256` digests and pin the wrappers (reproducible / digest-enforcing Docker postures) |
+
+**PowerShell** uses native switches:
+
+```powershell
+claudesync-setup install -Mcp -Synchronizer -McpVersion 0.5.2 -PinDigest -Target claude-code
+```
+
+### Passing options to the piped installer
 
 ```sh
-# Unix
-curl -fsSL https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main/scripts/uninstall.sh | sh
-
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main/scripts/uninstall.ps1 | iex
+# bash: -s -- forwards args to a script read from stdin
+curl -fsSL <install.sh-url> | bash -s -- install --mcp --target=mcp-json --dry-run
 ```
 
-## What It Does
+```powershell
+# irm | iex cannot take args; build a scriptblock instead:
+& ([scriptblock]::Create((irm <install.ps1-url>))) install -Mcp -DryRun
+```
 
-ClaudeSync reads your session cookie from your browser (Firefox, Chrome, Edge, Brave, or Safari) and uses it to access the claude.ai web API. It can:
+`install-mcp.{sh,ps1}` and `uninstall.{sh,ps1}` remain as back-compat shims that
+delegate to `claudesync-setup`.
+
+---
+
+## What it does
+
+ClaudeSync reads your `claude.ai` session cookie from your browser and uses it to
+access the web API. It can:
 
 - **List conversations** with model, date, and project info
-- **Export conversations** as git repositories (conversation text + artifacts)
-- **Search** across all your conversations (full-text)
+- **Export conversations** as git repositories (text + artifacts) or JSON bundles
+- **Search** across all conversations (full-text)
 - **List projects** and download project knowledge files
-- **List and download artifacts** from the "wiggle" filesystem
-
-## Usage
+- **List / download artifacts** from the "wiggle" filesystem
 
 ### CLI
 
 ```sh
-# List your conversations
-claudesync ls
-
-# Export a conversation to a git repo
-claudesync export <conversation-id>
+claudesync ls                                   # list conversations
+claudesync export <conversation-id>             # export to a git repo
 claudesync export <conversation-id> --output ./my-export
-
-# Export as JSON bundle instead of git
 claudesync export <conversation-id> --format json
-
-# Search conversations
 claudesync search "typescript generics"
-
-# List projects
 claudesync projects
-
-# All commands support --json for machine-readable output
-claudesync ls --json
-claudesync projects --json
+claudesync ls --json                            # any command: --json for machine output
 ```
 
-### MCP Server
+### MCP server
 
-Once installed, the MCP server exposes 8 tools to Claude Code / Claude Desktop:
+Installed via `--mcp` and registered with your client through `--target`. Exposes
+8 tools over stdio:
 
 | Tool | Description |
 |------|-------------|
 | `list_organizations` | List your claude.ai organizations |
 | `list_conversations` | List conversations with metadata |
-| `get_conversation` | Get full conversation with all messages |
+| `get_conversation` | Full conversation with all messages |
 | `search_conversations` | Full-text search across conversations |
 | `list_projects` | List your projects |
-| `get_project_docs` | Get project knowledge file contents |
+| `get_project_docs` | Project knowledge file contents |
 | `list_artifacts` | List artifact files for a conversation |
 | `download_artifact` | Download an artifact file |
 
-### Docker
+To (re)configure the client later:
 
 ```sh
-# CLI via Docker (manual cookie)
-docker run --rm -e CLAUDE_AI_COOKIE='sessionKey=...' \
-  -v "$(pwd):/data" deathnerd/claudesync:latest ls
-
-# MCP server via Docker
-docker run --rm -i -e CLAUDE_AI_COOKIE='sessionKey=...' \
-  deathnerd/claudesync-mcp:latest
+claudesync-setup install --mcp --target=claude-code   # or claude-desktop / mcp-json
 ```
+
+### Docker (manual, no wrappers)
+
+```sh
+docker run --rm -e CLAUDE_AI_COOKIE='sessionKey=...' -v "$(pwd):/data" deathnerd/claudesync:latest ls
+docker run --rm -i -e CLAUDE_AI_COOKIE='sessionKey=...' deathnerd/claudesync-mcp:latest   # MCP
+```
+
+---
 
 ## Authentication
 
-ClaudeSync reads your `sessionKey` cookie automatically via a host-side broker
-built on [rookie](https://github.com/thewh1teagle/rookie) (auto-downloaded,
-SHA256-pinned on first run). Harvesting runs on the host because the Docker
-container cannot reach your OS keychain. Full details:
-[docs/cookie-harvesting.md](docs/cookie-harvesting.md).
+The cookie is read host-side by a small broker built on
+[rookie](https://github.com/thewh1teagle/rookie) (auto-downloaded, SHA256-pinned on
+first run). Harvesting must run on the host -- the container can't reach your OS
+keychain. Full details: [docs/cookie-harvesting.md](docs/cookie-harvesting.md).
 
 | Browser | Linux | macOS | Windows |
 |---------|-------|-------|---------|
 | Firefox | yes | yes | yes (recommended on Windows) |
 | Chrome / Edge / Brave | yes | yes | v10 only -- see note |
 | Safari | -- | yes (needs Full Disk Access) | -- |
-| Claude Desktop | yes (plaintext, maybe stale) | manual | manual |
+| Claude Desktop | yes (plaintext, may be stale) | manual | manual |
 | Manual `CLAUDE_AI_COOKIE` | always | always | always |
 
 > **Windows Chrome/Edge >= 127** use App-Bound Encryption, which no clean
-> open-source tool can decrypt. On Windows, use **Firefox** or set the cookie
-> manually. macOS and Linux are unaffected. See
-> [docs/cookie-harvesting.md](docs/cookie-harvesting.md) for Safari Full Disk
-> Access, arm64 limits, and Claude Desktop notes.
+> open-source tool can decrypt -- use **Firefox** on Windows, or set the cookie
+> manually. macOS and Linux are unaffected.
 
-**Manual method:** Open claude.ai, press F12, go to Application > Cookies > claude.ai, copy the `sessionKey` value, then:
+**Manual cookie** (always works): claude.ai > F12 > Application > Cookies >
+`sessionKey`, then:
 
 ```sh
-# Unix
-export CLAUDE_AI_COOKIE='sessionKey=<paste-value>'
-
-# PowerShell
-$env:CLAUDE_AI_COOKIE = 'sessionKey=<paste-value>'
+export CLAUDE_AI_COOKIE='sessionKey=<paste-value>'        # sh/zsh/fish
+$env:CLAUDE_AI_COOKIE = 'sessionKey=<paste-value>'        # PowerShell
 ```
+
+---
 
 ## Architecture
 
 ```
-Consumers:     CLI  |  MCP Server  |  (Firefox Extension -- future)
-                |          |
+Consumers:   CLI  |  MCP Server  |  (Firefox Extension -- future)
+                |        |
 Core SDK:    @infinite-room-labs/claudesync-core (TypeScript)
                Auth | API Client | Export Engine | Message Tree
                 |
 Transport:   claude.ai Web API (undocumented, cookie auth)
 ```
 
-**Monorepo packages:**
+Host-side wrappers (`claudesync`, `claudesync-mcp`) and the cookie broker are the
+only things installed locally; the SDK/CLI/MCP code runs in Docker. The installers
+ship those wrappers inside the image and extract them via `docker cp`, so they stay
+version-locked to the image (GitHub raw is only a loud fallback).
 
 | Package | Description |
 |---------|-------------|
 | `@infinite-room-labs/claudesync-core` | SDK: auth, HTTP client, Zod schemas, git export engine |
-| `@infinite-room-labs/claudesync-mcp-server` | MCP server with 8 tools (stdio transport) |
-| `@infinite-room-labs/claudesync-cli` | CLI tool (ls, export, search, projects) |
+| `@infinite-room-labs/claudesync-mcp-server` | MCP server, 8 tools (stdio) |
+| `@infinite-room-labs/claudesync-cli` | CLI (ls, export, search, projects) |
+
+---
 
 ## Requirements
 
-- **Node.js v24+** (required -- Cloudflare blocks Bun and curl via TLS fingerprinting)
-- **Docker** (for containerized usage)
-- **sqlite3** CLI (optional -- only for the Claude Desktop fallback on Linux; browser cookies use the bundled rookie)
-- **pnpm** (for development)
+- **Docker** -- for all normal usage
+- **Node.js v24+** -- development only (Cloudflare blocks Bun/curl via TLS fingerprinting)
+- **pnpm** -- development only
+- **sqlite3** -- optional; only the Claude-Desktop-on-Linux cookie fallback uses it
 
 ## Development
 
@@ -169,27 +195,14 @@ pnpm build
 pnpm test
 ```
 
-## Installer Options
-
-All install scripts support:
-
-| Flag | Description |
-|------|-------------|
-| `--force` / `-f` | Overwrite existing installations without asking |
-| (no flag) | Prompts interactively before replacing existing files |
-
-The MCP installer also supports:
-
-| Flag | Description |
-|------|-------------|
-| `--target claude-code` | Configure for Claude Code (skip interactive menu) |
-| `--target claude-desktop` | Configure for Claude Desktop |
-| `--target mcp-json` | Write project-level `.mcp.json` |
-
 ## License
 
 MIT
 
 ## Disclaimer
 
-ClaudeSync is an unofficial, community-built tool. It is not affiliated with, endorsed by, or supported by Anthropic. It accesses the undocumented claude.ai web API using your own session credentials to export your own data. Use of this tool may violate Anthropic's Terms of Service. The authors assume no liability for any consequences of using this tool, including but not limited to account suspension.
+ClaudeSync is an unofficial, community-built tool, not affiliated with, endorsed
+by, or supported by Anthropic. It accesses the undocumented claude.ai web API using
+your own session credentials to export your own data. Use may violate Anthropic's
+Terms of Service. The authors assume no liability for any consequences, including
+account suspension.

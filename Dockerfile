@@ -57,9 +57,10 @@ LABEL org.opencontainers.image.title="ClaudeSync MCP Server" \
 WORKDIR /app
 COPY --from=builder --chown=node:node /app/pruned-mcp /app
 # Host-side wrapper assets, version-locked to this image. Installers extract
-# these via `docker cp` so the cookie broker stays in sync with the product.
+# these via `docker cp` so the broker + setup CLI stay in sync with the product.
 COPY scripts/lib/ /opt/claudesync/host/lib/
 COPY scripts/completions/ /opt/claudesync/host/completions/
+COPY scripts/claudesync-setup.sh scripts/claudesync-setup.ps1 /opt/claudesync/host/
 USER node
 
 ENTRYPOINT ["node", "dist/index.js"]
@@ -84,9 +85,10 @@ RUN apt-get update && \
 
 COPY --from=builder --chown=node:node /app/pruned-cli /app
 # Host-side wrapper assets, version-locked to this image. Installers extract
-# these via `docker cp` so the cookie broker stays in sync with the product.
+# these via `docker cp` so the broker + setup CLI stay in sync with the product.
 COPY scripts/lib/ /opt/claudesync/host/lib/
 COPY scripts/completions/ /opt/claudesync/host/completions/
+COPY scripts/claudesync-setup.sh scripts/claudesync-setup.ps1 /opt/claudesync/host/
 USER node
 WORKDIR /data
 
