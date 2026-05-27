@@ -97,8 +97,10 @@ if ! command -v docker >/dev/null 2>&1; then
     die "Docker is not installed or not on PATH. Install Docker first: https://docs.docker.com/get-docker/"
 fi
 
+# sqlite3 is optional now (cookie reading is handled by rookie via the broker;
+# sqlite3 is only a Claude-Desktop-on-Linux fallback).
 if ! command -v sqlite3 >/dev/null 2>&1; then
-    die "sqlite3 is not installed. Install it with your package manager (e.g. 'apt install sqlite3' or 'brew install sqlite3')."
+    warn "sqlite3 not found (optional -- only used for the Claude Desktop fallback on Linux)."
 fi
 
 JQ_AVAILABLE=0
@@ -114,83 +116,55 @@ fi
 success "Docker image ready."
 
 # ---------------------------------------------------------------------------
-# Firefox profile resolver
-# (Duplicated from install.sh intentionally -- this script is self-contained)
+# Install the shared cookie broker (scripts/lib/harvest-cookie.sh)
+# The generated wrapper calls this at runtime. Same broker the CLI uses.
+# Source order: local repo (dev) -> pulled MCP image (version-locked) -> GitHub.
 # ---------------------------------------------------------------------------
-find_firefox_profile() {
-    _candidates=""
-    case "$(uname -s)" in
-        Darwin)
-            _candidates="${HOME}/Library/Application Support/Firefox/Profiles"
-            ;;
-        *)
-            _candidates="${HOME}/.mozilla/firefox
-${HOME}/snap/firefox/common/.mozilla/firefox
-${HOME}/.var/app/org.mozilla.firefox/.mozilla/firefox"
-            ;;
-    esac
+_script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
 
-    IFS='
-'
-    for _base in ${_candidates}; do
-        _ini="${_base}/profiles.ini"
-        if [ -f "${_ini}" ]; then
-            _profile_path=""
-            _is_default=0
-            _current_path=""
-            while IFS= read -r _line; do
-                case "${_line}" in
-                    \[*)
-                        if [ "${_is_default}" = "1" ] && [ -n "${_current_path}" ]; then
-                            _profile_path="${_current_path}"
-                            break
-                        fi
-                        _is_default=0
-                        _current_path=""
-                        ;;
-                    Default=1*)
-                        _is_default=1
-                        ;;
-                    Path=*)
-                        _current_path="${_line#Path=}"
-                        ;;
-                esac
-            done < "${_ini}"
-            if [ -z "${_profile_path}" ] && [ "${_is_default}" = "1" ] && [ -n "${_current_path}" ]; then
-                _profile_path="${_current_path}"
-            fi
-            if [ -n "${_profile_path}" ]; then
-                case "${_profile_path}" in
-                    /*)
-                        _full="${_profile_path}"
-                        ;;
-                    *)
-                        _full="${_base}/${_profile_path}"
-                        ;;
-                esac
-                if [ -d "${_full}" ]; then
-                    printf "%s" "${_full}"
-                    return 0
-                fi
-            fi
-        fi
-    done
-    return 1
+_extract_from_image() {
+    _img_path="$1"
+    _dest="$2"
+    command -v docker >/dev/null 2>&1 || return 1
+    _cid="$(docker create deathnerd/claudesync-mcp:latest 2>/dev/null)" || return 1
+    if docker cp "${_cid}:${_img_path}" "${_dest}" >/dev/null 2>&1; then
+        docker rm -f "${_cid}" >/dev/null 2>&1 || true
+        [ -f "${_dest}" ]
+    else
+        docker rm -f "${_cid}" >/dev/null 2>&1 || true
+        return 1
+    fi
 }
 
-FIREFOX_PROFILE=""
-if _fp="$(find_firefox_profile 2>/dev/null)"; then
-    FIREFOX_PROFILE="${_fp}"
-    if [ ! -f "${FIREFOX_PROFILE}/cookies.sqlite" ]; then
-        warn "Firefox profile found but cookies.sqlite is missing. Log in to claude.ai first."
-        FIREFOX_PROFILE=""
-    fi
-fi
+install_broker() {
+    _broker_dir="${XDG_DATA_HOME:-${HOME}/.local/share}/claudesync"
+    BROKER_PATH="${_broker_dir}/harvest-cookie.sh"
+    mkdir -p "${_broker_dir}"
 
-if [ -z "${FIREFOX_PROFILE}" ]; then
-    warn "Could not locate a Firefox profile with cookies.sqlite."
-    warn "The wrapper script will still be created; it will read the cookie at runtime."
-fi
+    _broker_local="${_script_dir}/lib/harvest-cookie.sh"
+    if [ -f "${_broker_local}" ]; then
+        cp "${_broker_local}" "${BROKER_PATH}"
+        success "Installed cookie broker from local repo into ${BROKER_PATH}"
+    elif _extract_from_image "/opt/claudesync/host/lib/harvest-cookie.sh" "${BROKER_PATH}"; then
+        success "Installed cookie broker from image into ${BROKER_PATH}"
+    else
+        warn "FALLBACK: could not source the broker from the local repo or the Docker image."
+        warn "  Fetching the LATEST broker from GitHub (main branch) instead --"
+        warn "  this may not match your pinned image version."
+        _broker_url="https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main/scripts/lib/harvest-cookie.sh"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "${_broker_url}" -o "${BROKER_PATH}" || die "Failed to download cookie broker from ${_broker_url}"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "${BROKER_PATH}" "${_broker_url}" || die "Failed to download cookie broker from ${_broker_url}"
+        else
+            die "Need curl or wget to install the cookie broker."
+        fi
+        success "Installed cookie broker from GitHub (main) into ${BROKER_PATH}"
+    fi
+    chmod +x "${BROKER_PATH}" 2>/dev/null || true
+}
+
+install_broker
 
 # ---------------------------------------------------------------------------
 # Create the wrapper script at ~/.local/bin/claudesync-mcp
@@ -213,96 +187,31 @@ create_wrapper() {
 
     mkdir -p "${WRAPPER_DIR}"
 
-    # Build candidate list for this platform.
-    case "$(uname -s)" in
-        Darwin)
-            _cands='"${HOME}/Library/Application Support/Firefox/Profiles"'
-            ;;
-        *)
-            _cands='"${HOME}/.mozilla/firefox" "${HOME}/snap/firefox/common/.mozilla/firefox" "${HOME}/.var/app/org.mozilla.firefox/.mozilla/firefox"'
-            ;;
-    esac
-
-    cat > "${WRAPPER_PATH}" << 'WRAPPER_EOF'
+    # The wrapper delegates cookie resolution to the shared broker (installed
+    # above) and execs the MCP container. The broker path is embedded at
+    # install time. Guidance from the broker lands on stderr, which is safe for
+    # the JSON-RPC stdio transport (stdout stays clean).
+    cat > "${WRAPPER_PATH}" << WRAPPER_EOF
 #!/bin/sh
-# claudesync-mcp wrapper -- reads browser cookie and runs the MCP container
-# Installed by: https://github.com/InfiniteRoomLabs/claudesync
+# claudesync-mcp wrapper -- resolves the cookie via the shared broker, then
+# runs the MCP container. Installed by: https://github.com/InfiniteRoomLabs/claudesync
 set -eu
 
 _mcp_error() {
-  printf '{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"claudesync-mcp: %s"}}' "$1" >&2
+  printf '{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"claudesync-mcp: %s"}}' "\$1" >&2
   exit 1
 }
 
-# -- dependency checks --
 command -v docker >/dev/null 2>&1 || _mcp_error "docker not found. Install Docker: https://docs.docker.com/get-docker/"
 
-# -- resolve cookie (fallback chain) --
-_cs_cookie_header=""
+_cs_broker="${BROKER_PATH}"
+[ -f "\${_cs_broker}" ] || _mcp_error "cookie broker missing at \${_cs_broker}; re-run install-mcp.sh"
 
-# 1. If CLAUDE_AI_COOKIE is already set, use it
-if [ -n "${CLAUDE_AI_COOKIE:-}" ]; then
-  _cs_cookie_header="${CLAUDE_AI_COOKIE}"
-else
-  command -v sqlite3 >/dev/null 2>&1 || _mcp_error "sqlite3 not found. Install sqlite3 (apt install sqlite3 / brew install sqlite3), or set CLAUDE_AI_COOKIE env var."
+_cs_cookie_header="\$(sh "\${_cs_broker}" 2>/dev/null)" || _mcp_error "Could not read sessionKey cookie. Log in to claude.ai in a browser, or set CLAUDE_AI_COOKIE='sessionKey=<value>'."
+[ -n "\${_cs_cookie_header}" ] || _mcp_error "Could not read sessionKey cookie. Log in to claude.ai in a browser, or set CLAUDE_AI_COOKIE='sessionKey=<value>'."
 
-  # 2. Try Firefox
-  _cs_profile=""
-  case "$(uname -s)" in
-    Darwin)
-      _cs_candidates="${HOME}/Library/Application Support/Firefox/Profiles"
-      ;;
-    *)
-      _cs_candidates="${HOME}/.mozilla/firefox
-${HOME}/snap/firefox/common/.mozilla/firefox
-${HOME}/.var/app/org.mozilla.firefox/.mozilla/firefox"
-      ;;
-  esac
-
-  IFS='
-'
-  for _cs_base in ${_cs_candidates}; do
-    _cs_ini="${_cs_base}/profiles.ini"
-    if [ -f "${_cs_ini}" ]; then
-      _cs_cur="" _cs_def=0 _cs_found=""
-      while IFS= read -r _cs_line; do
-        case "${_cs_line}" in
-          \[*)
-            [ "${_cs_def}" = "1" ] && [ -n "${_cs_cur}" ] && { _cs_found="${_cs_cur}"; break; }
-            _cs_def=0; _cs_cur=""
-            ;;
-          Default=1*) _cs_def=1 ;;
-          Path=*) _cs_cur="${_cs_line#Path=}" ;;
-        esac
-      done < "${_cs_ini}"
-      [ -z "${_cs_found}" ] && [ "${_cs_def}" = "1" ] && _cs_found="${_cs_cur}"
-      if [ -n "${_cs_found}" ]; then
-        case "${_cs_found}" in
-          /*) _cs_profile="${_cs_found}" ;;
-          *)  _cs_profile="${_cs_base}/${_cs_found}" ;;
-        esac
-        [ -d "${_cs_profile}" ] && break
-        _cs_profile=""
-      fi
-    fi
-  done
-  unset IFS
-
-  if [ -n "${_cs_profile}" ] && [ -f "${_cs_profile}/cookies.sqlite" ]; then
-    _cs_val="$(sqlite3 -readonly "file:${_cs_profile}/cookies.sqlite?immutable=1" \
-      "SELECT value FROM moz_cookies WHERE host LIKE '%claude.ai%' AND name='sessionKey' LIMIT 1;" \
-      2>/dev/null || true)"
-    [ -n "${_cs_val}" ] && _cs_cookie_header="sessionKey=${_cs_val}"
-  fi
-
-  # 3. Nothing worked
-  if [ -z "${_cs_cookie_header}" ]; then
-    _mcp_error "Could not read sessionKey from Firefox. Log in to claude.ai in Firefox, or set CLAUDE_AI_COOKIE='sessionKey=<value>' (get value from F12 > Application > Cookies)."
-  fi
-fi
-
-exec docker run --rm -i \
-  -e "CLAUDE_AI_COOKIE=${_cs_cookie_header}" \
+exec docker run --rm -i \\
+  -e "CLAUDE_AI_COOKIE=\${_cs_cookie_header}" \\
   deathnerd/claudesync-mcp:latest
 WRAPPER_EOF
 
@@ -556,7 +465,8 @@ esac
 printf "%b" "${BOLD}"
 printf "  Done! Wrapper: %s\n" "${WRAPPER_PATH}"
 printf "%b" "${RESET}"
-printf "  The wrapper reads your Firefox sessionKey at invocation time.\n"
-printf "  If the cookie expires, just log in to claude.ai in Firefox again.\n\n"
+printf "  The wrapper reads your sessionKey at invocation time via the shared\n"
+printf "  broker (rookie-based: Firefox/Chrome/Edge). If the cookie expires,\n"
+printf "  just log in to claude.ai in your browser again.\n\n"
 printf "  To smoke-test the wrapper directly:\n"
 printf "    echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' | %s\n\n" "${WRAPPER_PATH}"

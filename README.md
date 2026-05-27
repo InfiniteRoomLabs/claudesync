@@ -40,7 +40,7 @@ irm https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main/scripts/u
 
 ## What It Does
 
-ClaudeSync reads your session cookie from Firefox (or Chrome on Windows/macOS) and uses it to access the claude.ai web API. It can:
+ClaudeSync reads your session cookie from your browser (Firefox, Chrome, Edge, Brave, or Safari) and uses it to access the claude.ai web API. It can:
 
 - **List conversations** with model, date, and project info
 - **Export conversations** as git repositories (conversation text + artifacts)
@@ -103,15 +103,25 @@ docker run --rm -i -e CLAUDE_AI_COOKIE='sessionKey=...' \
 
 ## Authentication
 
-ClaudeSync reads your `sessionKey` cookie automatically:
+ClaudeSync reads your `sessionKey` cookie automatically via a host-side broker
+built on [rookie](https://github.com/thewh1teagle/rookie) (auto-downloaded,
+SHA256-pinned on first run). Harvesting runs on the host because the Docker
+container cannot reach your OS keychain. Full details:
+[docs/cookie-harvesting.md](docs/cookie-harvesting.md).
 
-| Browser | Platform | Method |
-|---------|----------|--------|
-| Firefox | Linux, macOS | Reads `cookies.sqlite` directly (standard, Snap, Flatpak paths) |
-| Chrome | Windows | DPAPI decryption (native, no external deps) |
-| Chrome | macOS | Keychain access via `security` CLI |
-| Chrome | Linux | Not auto-supported -- use `pycookiecheat` or manual paste |
-| Any | Any | Set `CLAUDE_AI_COOKIE` env var manually |
+| Browser | Linux | macOS | Windows |
+|---------|-------|-------|---------|
+| Firefox | yes | yes | yes (recommended on Windows) |
+| Chrome / Edge / Brave | yes | yes | v10 only -- see note |
+| Safari | -- | yes (needs Full Disk Access) | -- |
+| Claude Desktop | yes (plaintext, maybe stale) | manual | manual |
+| Manual `CLAUDE_AI_COOKIE` | always | always | always |
+
+> **Windows Chrome/Edge >= 127** use App-Bound Encryption, which no clean
+> open-source tool can decrypt. On Windows, use **Firefox** or set the cookie
+> manually. macOS and Linux are unaffected. See
+> [docs/cookie-harvesting.md](docs/cookie-harvesting.md) for Safari Full Disk
+> Access, arm64 limits, and Claude Desktop notes.
 
 **Manual method:** Open claude.ai, press F12, go to Application > Cookies > claude.ai, copy the `sessionKey` value, then:
 
@@ -146,7 +156,7 @@ Transport:   claude.ai Web API (undocumented, cookie auth)
 
 - **Node.js v24+** (required -- Cloudflare blocks Bun and curl via TLS fingerprinting)
 - **Docker** (for containerized usage)
-- **sqlite3** CLI (for Firefox cookie reading on Unix)
+- **sqlite3** CLI (optional -- only for the Claude Desktop fallback on Linux; browser cookies use the bundled rookie)
 - **pnpm** (for development)
 
 ## Development

@@ -73,6 +73,15 @@ Phase 1 deliverables: Core SDK + MCP Server (3 tools: list_orgs, list_convos, ge
 - Validate artifact paths; use `path.basename()` for local file writes
 - MCP server: stdio transport only (network transport is unsafe without auth)
 
+### Cookie harvesting
+Host-side only -- the container can't reach the OS keychain. A shared broker
+(`scripts/lib/harvest-cookie.sh`, `Harvest-Cookie.ps1`) shells out to the pinned
+MIT `rookie` CLI (auto-downloaded, SHA256-verified) to read the `claude.ai`
+`sessionKey` from browsers, then passes it via `CLAUDE_AI_COOKIE`. Installers
+ship the broker into the Docker image and extract it (local repo -> image ->
+GitHub fallback). Windows Chrome >= 127 (App-Bound Encryption) is unsupported ->
+Firefox/manual. See `docs/cookie-harvesting.md` and `docs/claude-desktop-linux.md`.
+
 ### File Encoding
 **UTF-8 only.** No smart quotes, em dashes, or Office characters.
 

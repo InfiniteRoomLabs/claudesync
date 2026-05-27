@@ -68,6 +68,50 @@ if ($LASTEXITCODE -ne 0) {
 Write-Success "Docker image ready."
 
 # ---------------------------------------------------------------------------
+# Install the shared cookie broker (Harvest-Cookie.ps1)
+# Source order: local repo (dev) -> pulled MCP image (version-locked) -> GitHub.
+# The generated wrapper calls this; same broker the CLI uses.
+# ---------------------------------------------------------------------------
+function Copy-FromImage {
+    param([string]$ImagePath, [string]$Dest)
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
+    $cid = (docker create deathnerd/claudesync-mcp:latest 2>$null | Select-Object -First 1)
+    if (-not $cid) { return $false }
+    try {
+        docker cp "${cid}:$ImagePath" $Dest 2>$null | Out-Null
+        return (Test-Path $Dest)
+    } finally {
+        docker rm -f $cid 2>$null | Out-Null
+    }
+}
+
+$brokerDir  = Join-Path $env:LOCALAPPDATA 'claudesync'
+$brokerDest = Join-Path $brokerDir 'Harvest-Cookie.ps1'
+New-Item -ItemType Directory -Path $brokerDir -Force | Out-Null
+
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { $null }
+$localBroker = if ($scriptDir) { Join-Path $scriptDir 'lib\Harvest-Cookie.ps1' } else { $null }
+
+if ($localBroker -and (Test-Path $localBroker)) {
+    Copy-Item $localBroker $brokerDest -Force
+    Write-Success "Installed cookie broker from local repo into $brokerDest"
+}
+elseif (Copy-FromImage '/opt/claudesync/host/lib/Harvest-Cookie.ps1' $brokerDest) {
+    Write-Success "Installed cookie broker from image into $brokerDest"
+}
+else {
+    Write-Warn "FALLBACK: could not source the broker from the local repo or the Docker image."
+    Write-Warn "  Fetching the LATEST broker from GitHub (main branch) instead --"
+    Write-Warn "  this may not match your pinned image version."
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+        try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+    }
+    $brokerUrl = "https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main/scripts/lib/Harvest-Cookie.ps1"
+    Invoke-WebRequest -Uri $brokerUrl -OutFile $brokerDest -UseBasicParsing
+    Write-Success "Installed cookie broker from GitHub (main) into $brokerDest"
+}
+
+# ---------------------------------------------------------------------------
 # Wrapper directory and paths
 # ---------------------------------------------------------------------------
 $WrapperDir = Join-Path $env:LOCALAPPDATA "claudesync"
@@ -115,7 +159,8 @@ function New-WrapperScript {
     # -- The .ps1 wrapper --
     $ps1Content = @'
 #Requires -Version 5.1
-# claudesync-mcp wrapper -- reads browser cookies and runs the MCP Docker container
+# claudesync-mcp wrapper -- resolves the cookie via the shared broker
+# (Harvest-Cookie.ps1) and runs the MCP Docker container over stdio.
 # Installed by: https://github.com/InfiniteRoomLabs/claudesync
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -127,240 +172,25 @@ function _Mcp_Error {
     exit 1
 }
 
-# -- dependency check --
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     _Mcp_Error "docker not found. Install Docker Desktop: https://docs.docker.com/desktop/install/windows-install/"
 }
 
-# -- resolve cookie (fallback chain) --
-$cookieHeader = ""
-
-# 1. If CLAUDE_AI_COOKIE env var is set, use it
-if ($env:CLAUDE_AI_COOKIE) {
-    $cookieHeader = $env:CLAUDE_AI_COOKIE
+$broker = Join-Path $env:LOCALAPPDATA "claudesync\Harvest-Cookie.ps1"
+if (-not (Test-Path $broker)) {
+    _Mcp_Error "cookie broker missing at $broker; re-run install-mcp.ps1"
 }
-else {
-    # 2. Try Chrome (DPAPI -- native on Windows, the easy path)
-    try {
-        $localStatePath = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data\Local State"
-        $cookiesDbPath = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data\Default\Network\Cookies"
-        if (-not (Test-Path $cookiesDbPath)) {
-            $cookiesDbPath = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data\Default\Cookies"
-        }
 
-        if ((Test-Path $localStatePath) -and (Test-Path $cookiesDbPath)) {
-            $localStateJson = Get-Content $localStatePath -Raw | ConvertFrom-Json
-            $encryptedKeyB64 = $localStateJson.os_crypt.encrypted_key
+# Run the broker in a child process with -ExecutionPolicy Bypass (prefer pwsh 7+,
+# fall back to Windows PowerShell 5.1; the broker supports both).
+$psExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+if (-not $psExe) { $psExe = (Get-Command powershell -ErrorAction SilentlyContinue).Source }
+if (-not $psExe) { $psExe = "powershell" }
 
-            if ($encryptedKeyB64) {
-                $encryptedKeyBytes = [Convert]::FromBase64String($encryptedKeyB64)
-                $encryptedKeyBytes = $encryptedKeyBytes[5..($encryptedKeyBytes.Length - 1)]
-
-                Add-Type -AssemblyName System.Security
-                $masterKey = [System.Security.Cryptography.ProtectedData]::Unprotect(
-                    $encryptedKeyBytes, $null,
-                    [System.Security.Cryptography.DataProtectionScope]::CurrentUser
-                )
-
-                $tempDb = Join-Path $env:TEMP "claudesync_mcp_chrome_$(Get-Random).sqlite"
-                Copy-Item $cookiesDbPath $tempDb -Force
-
-                $encryptedValue = $null
-
-                if (Get-Command sqlite3 -ErrorAction SilentlyContinue) {
-                    try {
-                        $hexResult = sqlite3 $tempDb `
-                            "SELECT hex(encrypted_value) FROM cookies WHERE host_key LIKE '%claude.ai%' AND name='sessionKey' LIMIT 1;" 2>$null
-                        if ($hexResult) {
-                            $encryptedValue = [byte[]](@(0..($hexResult.Length / 2 - 1)) | ForEach-Object {
-                                [Convert]::ToByte($hexResult.Substring($_ * 2, 2), 16)
-                            })
-                        }
-                    } catch {}
-                }
-
-                if (-not $encryptedValue) {
-                    try {
-                        $sqliteDllPaths = @(
-                            "${env:ProgramFiles}\System.Data.SQLite\bin\System.Data.SQLite.dll",
-                            "${env:ProgramFiles(x86)}\System.Data.SQLite\bin\System.Data.SQLite.dll"
-                        )
-                        $nugetCache = Join-Path $env:USERPROFILE ".nuget\packages\system.data.sqlite.core"
-                        if (Test-Path $nugetCache) {
-                            $latestVersion = Get-ChildItem $nugetCache -Directory | Sort-Object Name -Descending | Select-Object -First 1
-                            if ($latestVersion) {
-                                $sqliteDllPaths += Join-Path $latestVersion.FullName "lib\net46\System.Data.SQLite.dll"
-                            }
-                        }
-                        foreach ($dllPath in $sqliteDllPaths) {
-                            if (Test-Path $dllPath) {
-                                if (-not ([System.AppDomain]::CurrentDomain.GetAssemblies() |
-                                    Where-Object { $_.GetName().Name -eq 'System.Data.SQLite' })) {
-                                    Add-Type -Path $dllPath
-                                }
-                                $connStr = "Data Source=$tempDb;Read Only=True;"
-                                $conn = New-Object System.Data.SQLite.SQLiteConnection($connStr)
-                                $conn.Open()
-                                $cmd = $conn.CreateCommand()
-                                $cmd.CommandText = "SELECT encrypted_value FROM cookies WHERE host_key LIKE '%claude.ai%' AND name='sessionKey' LIMIT 1;"
-                                $reader = $cmd.ExecuteReader()
-                                if ($reader.Read()) {
-                                    $len = $reader.GetBytes(0, 0, $null, 0, 0)
-                                    $encryptedValue = New-Object byte[] $len
-                                    $reader.GetBytes(0, 0, $encryptedValue, 0, $len) | Out-Null
-                                }
-                                $reader.Close()
-                                $conn.Close()
-                                break
-                            }
-                        }
-                    } catch {}
-                }
-
-                Remove-Item $tempDb -Force -ErrorAction SilentlyContinue
-
-                if ($encryptedValue -and $encryptedValue.Length -ge 16) {
-                    $prefix = [System.Text.Encoding]::ASCII.GetString($encryptedValue[0..2])
-                    if ($prefix -eq "v10" -or $prefix -eq "v20") {
-                        $nonce = $encryptedValue[3..14]
-                        $ciphertextAndTag = $encryptedValue[15..($encryptedValue.Length - 1)]
-                        $tagStart = $ciphertextAndTag.Length - 16
-                        $ciphertext = $ciphertextAndTag[0..($tagStart - 1)]
-                        $tag = $ciphertextAndTag[$tagStart..($ciphertextAndTag.Length - 1)]
-
-                        if ($PSVersionTable.PSVersion.Major -ge 7) {
-                            try {
-                                $aesGcm = [System.Security.Cryptography.AesGcm]::new($masterKey)
-                                $plaintext = New-Object byte[] $ciphertext.Length
-                                $aesGcm.Decrypt([byte[]]$nonce, [byte[]]$ciphertext, [byte[]]$tag, $plaintext)
-                                $aesGcm.Dispose()
-                                $cookieValue = [System.Text.Encoding]::UTF8.GetString($plaintext)
-                                if ($cookieValue) { $cookieHeader = "sessionKey=$cookieValue" }
-                            } catch {}
-                        }
-
-                        if (-not $cookieHeader) {
-                            try {
-                                $aesGcmHelper = @"
-using System;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-public static class AesGcmMcpHelper {
-    [DllImport("bcrypt.dll")]
-    private static extern uint BCryptOpenAlgorithmProvider(out IntPtr hAlgorithm, string pszAlgId, string pszImpl, uint dwFlags);
-    [DllImport("bcrypt.dll")]
-    private static extern uint BCryptSetProperty(IntPtr hObject, string pszProperty, byte[] pbInput, int cbInput, uint dwFlags);
-    [DllImport("bcrypt.dll")]
-    private static extern uint BCryptGenerateSymmetricKey(IntPtr hAlgorithm, out IntPtr hKey, IntPtr pbKeyObject, int cbKeyObject, byte[] pbSecret, int cbSecret, uint dwFlags);
-    [DllImport("bcrypt.dll")]
-    private static extern uint BCryptDecrypt(IntPtr hKey, byte[] pbInput, int cbInput, IntPtr pPaddingInfo, byte[] pbIV, int cbIV, byte[] pbOutput, int cbOutput, out int pcbResult, uint dwFlags);
-    [DllImport("bcrypt.dll")]
-    private static extern uint BCryptDestroyKey(IntPtr hKey);
-    [DllImport("bcrypt.dll")]
-    private static extern uint BCryptCloseAlgorithmProvider(IntPtr hAlgorithm, uint dwFlags);
-    [StructLayout(LayoutKind.Sequential)]
-    private struct BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
-        public int cbSize; public int dwInfoVersion;
-        public IntPtr pbNonce; public int cbNonce;
-        public IntPtr pbAuthData; public int cbAuthData;
-        public IntPtr pbTag; public int cbTag;
-        public IntPtr pbMacContext; public int cbMacContext;
-        public int cbAAD; public long cbData; public int dwFlags;
-    }
-    public static byte[] Decrypt(byte[] key, byte[] nonce, byte[] ciphertext, byte[] tag) {
-        IntPtr hAlg = IntPtr.Zero, hKey = IntPtr.Zero;
-        try {
-            uint s = BCryptOpenAlgorithmProvider(out hAlg, "AES", null, 0);
-            if (s != 0) throw new CryptographicException("BCryptOpenAlgorithmProvider: " + s);
-            byte[] cm = System.Text.Encoding.Unicode.GetBytes("ChainingModeGCM\0");
-            s = BCryptSetProperty(hAlg, "ChainingMode", cm, cm.Length, 0);
-            if (s != 0) throw new CryptographicException("BCryptSetProperty: " + s);
-            s = BCryptGenerateSymmetricKey(hAlg, out hKey, IntPtr.Zero, 0, key, key.Length, 0);
-            if (s != 0) throw new CryptographicException("BCryptGenerateSymmetricKey: " + s);
-            var ai = new BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO();
-            ai.cbSize = Marshal.SizeOf(ai); ai.dwInfoVersion = 1;
-            GCHandle nh = GCHandle.Alloc(nonce, GCHandleType.Pinned);
-            GCHandle th = GCHandle.Alloc(tag, GCHandleType.Pinned);
-            try {
-                ai.pbNonce = nh.AddrOfPinnedObject(); ai.cbNonce = nonce.Length;
-                ai.pbTag = th.AddrOfPinnedObject(); ai.cbTag = tag.Length;
-                IntPtr aip = Marshal.AllocHGlobal(Marshal.SizeOf(ai));
-                Marshal.StructureToPtr(ai, aip, false);
-                byte[] pt = new byte[ciphertext.Length]; int bw;
-                s = BCryptDecrypt(hKey, ciphertext, ciphertext.Length, aip, null, 0, pt, pt.Length, out bw, 0);
-                Marshal.FreeHGlobal(aip);
-                if (s != 0) throw new CryptographicException("BCryptDecrypt: " + s);
-                Array.Resize(ref pt, bw); return pt;
-            } finally { nh.Free(); th.Free(); }
-        } finally {
-            if (hKey != IntPtr.Zero) BCryptDestroyKey(hKey);
-            if (hAlg != IntPtr.Zero) BCryptCloseAlgorithmProvider(hAlg, 0);
-        }
-    }
-}
-"@
-                                if (-not ([System.Management.Automation.PSTypeName]'AesGcmMcpHelper').Type) {
-                                    Add-Type -TypeDefinition $aesGcmHelper -Language CSharp
-                                }
-                                $pt = [AesGcmMcpHelper]::Decrypt($masterKey, [byte[]]$nonce, [byte[]]$ciphertext, [byte[]]$tag)
-                                $cookieValue = [System.Text.Encoding]::UTF8.GetString($pt)
-                                if ($cookieValue) { $cookieHeader = "sessionKey=$cookieValue" }
-                            } catch {}
-                        }
-                    }
-                    else {
-                        try {
-                            $decrypted = [System.Security.Cryptography.ProtectedData]::Unprotect(
-                                $encryptedValue, $null,
-                                [System.Security.Cryptography.DataProtectionScope]::CurrentUser
-                            )
-                            $cookieValue = [System.Text.Encoding]::UTF8.GetString($decrypted)
-                            if ($cookieValue) { $cookieHeader = "sessionKey=$cookieValue" }
-                        } catch {}
-                    }
-                }
-            }
-        }
-    } catch {}
-
-    # 3. Try Firefox
-    if (-not $cookieHeader) {
-        $firefoxBase = Join-Path $env:APPDATA "Mozilla\Firefox"
-        $profilesIni = Join-Path $firefoxBase "profiles.ini"
-        if (Test-Path $profilesIni) {
-            $profilePath = ""; $currentPath = ""; $isDefault = $false
-            foreach ($line in (Get-Content $profilesIni)) {
-                if ($line -match '^\[') {
-                    if ($isDefault -and $currentPath) { $profilePath = $currentPath; break }
-                    $isDefault = $false; $currentPath = ""
-                }
-                elseif ($line -match '^Default=1') { $isDefault = $true }
-                elseif ($line -match '^Path=(.+)') { $currentPath = $Matches[1] }
-            }
-            if (-not $profilePath -and $isDefault -and $currentPath) { $profilePath = $currentPath }
-            if ($profilePath) {
-                if (-not [System.IO.Path]::IsPathRooted($profilePath)) {
-                    $profilePath = Join-Path $firefoxBase $profilePath
-                }
-                $cookiesDb = Join-Path $profilePath "cookies.sqlite"
-                if (Test-Path $cookiesDb) {
-                    if (Get-Command sqlite3 -ErrorAction SilentlyContinue) {
-                        try {
-                            $tempDb = Join-Path $env:TEMP "claudesync_mcp_ff_$(Get-Random).sqlite"
-                            Copy-Item $cookiesDb $tempDb -Force
-                            $val = sqlite3 $tempDb "SELECT value FROM moz_cookies WHERE host LIKE '%claude.ai%' AND name='sessionKey' LIMIT 1;" 2>$null
-                            Remove-Item $tempDb -Force -ErrorAction SilentlyContinue
-                            if ($val) { $cookieHeader = "sessionKey=$val" }
-                        } catch {}
-                    }
-                }
-            }
-        }
-    }
-
-    if (-not $cookieHeader) {
-        _Mcp_Error "Could not read sessionKey from Chrome or Firefox. Log in to claude.ai, or set CLAUDE_AI_COOKIE='sessionKey=<value>' (F12 > Application > Cookies)."
-    }
+$cookieHeader = & $psExe -NoProfile -ExecutionPolicy Bypass -File $broker
+$cookieHeader = ($cookieHeader | Where-Object { $_ } | Select-Object -Last 1)
+if (-not $cookieHeader) {
+    _Mcp_Error "Could not read sessionKey cookie. Log in to claude.ai in a browser, or set CLAUDE_AI_COOKIE='sessionKey=<value>'."
 }
 
 # -- run the MCP container (stdio) --
