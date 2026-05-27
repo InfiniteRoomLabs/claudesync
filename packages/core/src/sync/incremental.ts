@@ -245,6 +245,7 @@ function writeStateFile(
     schema_version: 1,
     conversation_uuid: conversation.uuid,
     conversation_name: conversation.name,
+    model: conversation.model ?? null,
     updated_at: summary.updated_at,
     current_leaf_message_uuid: conversation.current_leaf_message_uuid ?? null,
     leaves,

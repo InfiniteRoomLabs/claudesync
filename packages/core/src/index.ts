@@ -99,7 +99,7 @@ export type {
 } from "./sync/fetch.js";
 export { fetchAndBuild } from "./sync/fetch.js";
 export type { ReplaceWithPreserveOptions } from "./sync/files-mode.js";
-export { replaceWithPreserve, walkRelative } from "./sync/files-mode.js";
+export { replaceWithPreserve, walkRelative, expandPreserveForProject } from "./sync/files-mode.js";
 
 // Naming helpers
 export { slugify, safeSlug, displayName } from "./util/naming.js";

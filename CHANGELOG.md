@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-05-27
+
+### Fixed
+- **`--preserve` now rescues project-nested conversation files.** `--preserve` globs are matched relative to the directory being rewritten. For project exports that directory is the project root, but conversation files live under `conversations/<slug>/`, so a bare `--preserve INDEX.md` only protected the project-root `INDEX.md` and silently dropped every nested conversation's `INDEX.md` on re-sync. `writeProjectBundle` now expands each preserve pattern with a globstar-prefixed variant (via the new `expandPreserveForProject` core export) so a bare pattern applies at the project root and at any nesting depth. Standalone-conversation exports are unaffected.
+
+### Added
+- Conversation `model` is now persisted to `.claudesync-state.json` (nullable, backward-compatible — no `schema_version` bump). This lights up the existing "Model changed: X -> Y" changelog diff, which previously could never fire because the prior model was never stored. Note: only standalone conversations get a per-conversation state file; project-nested conversations still record their model via `README.md` only.
+- New core export `expandPreserveForProject()` — expands `--preserve` globs for the project-bundle scope.
+
 ## [0.6.0] - 2026-05-12
 
 ### Added

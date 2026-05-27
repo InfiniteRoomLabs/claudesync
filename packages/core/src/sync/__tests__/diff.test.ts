@@ -67,6 +67,7 @@ describe("diffConversation", () => {
       schema_version: 1,
       conversation_uuid: "conv-1",
       conversation_name: "c",
+      model: null,
       updated_at: c.updated_at,
       current_leaf_message_uuid: "b",
       leaves: [{ uuid: "b", last_message_index: 1 }],
@@ -88,6 +89,7 @@ describe("diffConversation", () => {
       schema_version: 1,
       conversation_uuid: "conv-1",
       conversation_name: "c",
+      model: null,
       updated_at: "2026-04-30T13:50:01Z",
       current_leaf_message_uuid: "b",
       leaves: [{ uuid: "b", last_message_index: 1 }],
@@ -117,6 +119,7 @@ describe("diffConversation", () => {
       schema_version: 1,
       conversation_uuid: "conv-1",
       conversation_name: "c",
+      model: null,
       updated_at: "2026-04-30T13:50:01Z",
       current_leaf_message_uuid: "b",
       leaves: [{ uuid: "b", last_message_index: 1 }],
@@ -145,6 +148,7 @@ describe("diffConversation", () => {
       schema_version: 1,
       conversation_uuid: "conv-1",
       conversation_name: "c",
+      model: null,
       updated_at: "2026-04-30T13:50:00Z",
       current_leaf_message_uuid: "a",
       leaves: [{ uuid: "a", last_message_index: 0 }],
@@ -161,12 +165,54 @@ describe("diffConversation", () => {
     expect(d.artifacts.removed.map((a) => a.path)).toEqual(["/mnt/user-data/outputs/gone.md"]);
   });
 
+  it("detects model change when the previous model was persisted", () => {
+    const c = conv([msg("a", "00000000", 0)], "a"); // conv() model = claude-haiku-4-5
+    const prev: SyncState = {
+      schema_version: 1,
+      conversation_uuid: "conv-1",
+      conversation_name: "c",
+      model: "claude-opus-4-7",
+      updated_at: "2026-04-30T13:50:00Z",
+      current_leaf_message_uuid: "a",
+      leaves: [{ uuid: "a", last_message_index: 0 }],
+      artifacts: [],
+      last_sync_at: "2026-04-30T13:55:00Z",
+      last_sync_action: "full",
+    };
+    const d = diffConversation(prev, c, noArtifacts);
+    expect(d.metadata.modelChanged).toEqual({
+      from: "claude-opus-4-7",
+      to: "claude-haiku-4-5",
+    });
+  });
+
+  it("does not report a model change when the previous model is absent (first sync post-upgrade)", () => {
+    const c = conv([msg("a", "00000000", 0)], "a");
+    const prev: SyncState = {
+      schema_version: 1,
+      conversation_uuid: "conv-1",
+      conversation_name: "c",
+      // Legacy state file (no model on disk) reads back as model: null after
+      // the schema default is applied.
+      model: null,
+      updated_at: c.updated_at,
+      current_leaf_message_uuid: "a",
+      leaves: [{ uuid: "a", last_message_index: 0 }],
+      artifacts: [],
+      last_sync_at: "2026-04-30T13:55:00Z",
+      last_sync_action: "full",
+    };
+    const d = diffConversation(prev, c, noArtifacts);
+    expect(d.metadata.modelChanged).toBeUndefined();
+  });
+
   it("detects rename in metadata", () => {
     const c = conv([msg("a", "00000000", 0)], "a", "new name");
     const prev: SyncState = {
       schema_version: 1,
       conversation_uuid: "conv-1",
       conversation_name: "old name",
+      model: null,
       updated_at: "2026-04-30T13:50:00Z",
       current_leaf_message_uuid: "a",
       leaves: [{ uuid: "a", last_message_index: 0 }],

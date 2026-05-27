@@ -8,6 +8,7 @@ import {
   safeSlug,
   displayName,
   replaceWithPreserve,
+  expandPreserveForProject,
   type ExportFormat,
   type GitBundleCommit,
 } from "@infinite-room-labs/claudesync-core";
@@ -195,6 +196,11 @@ async function writeProjectBundle(
   // Files / git mode: rebuild the project tree from scratch, but route through
   // replaceWithPreserve so locally-added files (INDEX.md at project + nested
   // conversation scope, hand-written notes, etc.) survive the re-sync.
+  //
+  // preserveGlobs are matched relative to the project root, but conversation
+  // files live under conversations/<slug>/. expandPreserveForProject adds a
+  // nested-depth variant of each pattern so a bare `--preserve INDEX.md` also
+  // rescues every nested conversation's INDEX.md (not just the project root's).
   await replaceWithPreserve({
     outputPath,
     writeFresh: async () => {
@@ -204,7 +210,7 @@ async function writeProjectBundle(
         rmSync(resolve(outputPath, ".git"), { recursive: true, force: true });
       }
     },
-    preserveGlobs: preserve,
+    preserveGlobs: expandPreserveForProject(preserve),
   });
 }
 

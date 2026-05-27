@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { replaceWithPreserve, walkRelative } from "../files-mode.js";
+import { replaceWithPreserve, walkRelative, expandPreserveForProject } from "../files-mode.js";
 
 let workdir: string;
 
@@ -167,6 +167,78 @@ describe("replaceWithPreserve", () => {
 
     expect(readFileSync(join(outputPath, "conversation.md"), "utf-8")).toBe("v2");
     expect(existsSync(staleStash)).toBe(false);
+  });
+});
+
+describe("expandPreserveForProject", () => {
+  it("adds a nested-depth variant for each user pattern", () => {
+    expect(expandPreserveForProject(["INDEX.md"])).toEqual([
+      "INDEX.md",
+      "**/INDEX.md",
+    ]);
+  });
+
+  it("expands multiple patterns, preserving order", () => {
+    expect(expandPreserveForProject(["INDEX.md", "notes/**"])).toEqual([
+      "INDEX.md",
+      "**/INDEX.md",
+      "notes/**",
+      "**/notes/**",
+    ]);
+  });
+
+  it("returns empty for empty input", () => {
+    expect(expandPreserveForProject([])).toEqual([]);
+  });
+});
+
+describe("project bundle preserve (regression: nested INDEX.md clobber)", () => {
+  // Reproduces the exact failure: a project export rewrites the project dir
+  // from scratch; project-nested conversation INDEX.md files must survive a
+  // bare `--preserve INDEX.md` because writeProjectBundle expands the globs.
+  async function runProjectResync(preserveGlobs: readonly string[]): Promise<string> {
+    const outputPath = join(workdir, "project");
+    // Pre-existing, locally-added files that must survive the re-sync.
+    mkdirSync(join(outputPath, "conversations/foo/notes"), { recursive: true });
+    writeFileSync(join(outputPath, "INDEX.md"), "project aggregate\n", "utf-8");
+    writeFileSync(join(outputPath, "conversations/foo/INDEX.md"), "nested index\n", "utf-8");
+    writeFileSync(join(outputPath, "conversations/foo/notes/scratch.md"), "my notes\n", "utf-8");
+    writeFileSync(join(outputPath, "conversations/foo/conversation.md"), "v1", "utf-8");
+
+    await replaceWithPreserve({
+      outputPath,
+      // Fresh bundle: project README + the conversation's fresh files only.
+      writeFresh: async () => {
+        mkdirSync(join(outputPath, "conversations/foo"), { recursive: true });
+        writeFileSync(join(outputPath, "README.md"), "project readme\n", "utf-8");
+        writeFileSync(join(outputPath, "conversations/foo/conversation.md"), "v2", "utf-8");
+        writeFileSync(join(outputPath, "conversations/foo/README.md"), "conv readme\n", "utf-8");
+      },
+      alwaysPreserve: ["CHANGELOG.md"],
+      preserveGlobs,
+    });
+    return outputPath;
+  }
+
+  it("BUG witness: bare 'INDEX.md' drops the nested INDEX.md", async () => {
+    const out = await runProjectResync(["INDEX.md"]);
+    // Project-root INDEX.md is preserved (matches relative to output dir)...
+    expect(existsSync(join(out, "INDEX.md"))).toBe(true);
+    // ...but the nested one is lost without expansion. This is the bug.
+    expect(existsSync(join(out, "conversations/foo/INDEX.md"))).toBe(false);
+  });
+
+  it("expanded globs preserve nested INDEX.md, root INDEX.md, and notes/**", async () => {
+    const out = await runProjectResync(
+      expandPreserveForProject(["INDEX.md", "notes/**"]),
+    );
+    // Locally-added files survive at every depth.
+    expect(readFileSync(join(out, "INDEX.md"), "utf-8")).toBe("project aggregate\n");
+    expect(readFileSync(join(out, "conversations/foo/INDEX.md"), "utf-8")).toBe("nested index\n");
+    expect(readFileSync(join(out, "conversations/foo/notes/scratch.md"), "utf-8")).toBe("my notes\n");
+    // Fresh bundle files win over any stash collision (bundle-wins rule intact).
+    expect(readFileSync(join(out, "conversations/foo/conversation.md"), "utf-8")).toBe("v2");
+    expect(readFileSync(join(out, "README.md"), "utf-8")).toBe("project readme\n");
   });
 });
 

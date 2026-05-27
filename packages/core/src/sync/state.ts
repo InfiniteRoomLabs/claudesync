@@ -19,6 +19,11 @@ export const SyncStateSchema = z.object({
   schema_version: z.literal(1),
   conversation_uuid: z.string(),
   conversation_name: z.string(),
+  // Conversation model (e.g. "claude-opus-4-7"). Nullable+optional+default so
+  // state files written before this field existed still parse; enables the
+  // "Model changed" changelog diff across syncs. Not a schema_version bump:
+  // the addition is backward compatible.
+  model: z.string().nullable().optional().default(null),
   updated_at: z.string(),
   current_leaf_message_uuid: z.string().nullable(),
   leaves: z.array(SyncStateLeafSchema),

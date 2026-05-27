@@ -169,8 +169,18 @@ export function diffConversation(
       to: conversation.name,
     };
   }
-  // Note: we do not store the previous model in state v1 (could be added),
-  // so model changes are only detected if state has it. Future-proof here.
+  // Model change: only detectable once the previous model was persisted to
+  // state (added alongside this code). Older state files have model === null/
+  // undefined; treat a missing prev model as "unknown" and only report a change
+  // when both sides are known and differ, so a first sync after the upgrade
+  // doesn't spuriously announce a model change.
+  if (prevState) {
+    const prevModel = prevState.model ?? null;
+    const curModel = conversation.model ?? null;
+    if (prevModel !== null && prevModel !== curModel) {
+      metadata.modelChanged = { from: prevModel, to: curModel };
+    }
+  }
 
   const isInitial = prevState === undefined;
   const isUnchanged =

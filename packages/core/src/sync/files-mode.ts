@@ -47,6 +47,29 @@ export interface ReplaceWithPreserveOptions {
   preserveGlobs?: readonly string[];
 }
 
+/**
+ * Expand user `--preserve` globs for the project-bundle scope.
+ *
+ * `replaceWithPreserve` matches globs relative to the output dir. For a project
+ * export the output dir is the project root, but conversation files are nested
+ * under `conversations/<slug>/`, so a bare pattern like `INDEX.md` only matches
+ * the project-root file and silently drops every nested conversation's
+ * `INDEX.md`. The CLI documents `--preserve` as "relative to each conversation
+ * dir", so each pattern must also apply at any nested depth.
+ *
+ * For every user pattern `p` we add a globstar-prefixed variant. The matcher
+ * compiles a leading globstar+slash to an OPTIONAL leading-segments group (see
+ * util/glob.ts), so the prefixed form already covers both the project root and
+ * any nesting depth; we keep the original `p` too for clarity.
+ *
+ * Example: ["INDEX.md"] -> ["INDEX.md", "(globstar)/INDEX.md"].
+ */
+export function expandPreserveForProject(
+  globs: readonly string[]
+): string[] {
+  return globs.flatMap((p) => [p, `**/${p}`]);
+}
+
 export async function replaceWithPreserve(
   opts: ReplaceWithPreserveOptions
 ): Promise<void> {
