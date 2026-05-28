@@ -103,14 +103,51 @@ access the web API. It can:
 
 ### CLI
 
+```
+SYNOPSIS
+    claudesync <command> [options]        (runs in Docker; reads the cookie automatically)
+
+COMMANDS
+    ls                          list conversations
+    export <conversation-id>    export one conversation
+    export-all                  export the entire organization
+    projects [list]             list projects
+    projects export <id>        export a project (knowledge + conversations)
+    search <query>              full-text search
+    tui                         interactive browser (Miller Columns)
+
+COMMON OPTIONS
+    --org <id>                  organization ID (auto-detected if omitted)
+    --json                      machine-readable output (ls / search / projects)
+    --query <jmespath>          filter JSON output (implies --json)
+
+LIST OPTIONS                    (ls, search)
+    --limit <n>                 max rows (ls: 20, search: 10)
+    --starred                   ls only: starred conversations
+
+EXPORT OPTIONS                  (export, export-all, projects export)
+    --output <path>             output directory
+    --format git|json|files     export format (default: git; export-all: files)
+    --author-name <name>        git author name (default: Claude)
+    --author-email <email>      git author email
+    --skip-artifacts            do not download artifacts
+    --skip-existing             skip if the output directory already exists
+    --skip-same                 skip if unchanged since the last sync
+    --preserve <glob>           keep locally-added files across re-syncs
+                                (repeatable; --format files; CHANGELOG.md always kept)
+
+    -h, --help                  --version
+```
+
 ```sh
+# Examples
 claudesync ls                                   # list conversations
 claudesync export <conversation-id>             # export to a git repo
-claudesync export <conversation-id> --output ./my-export
-claudesync export <conversation-id> --format json
+claudesync export <conversation-id> --output ./my-export --format files
+claudesync export-all --format files            # whole org
 claudesync search "typescript generics"
 claudesync projects
-claudesync ls --json                            # any command: --json for machine output
+claudesync ls --json --query "[?starred]"       # machine output, JMESPath-filtered
 ```
 
 ### MCP server
