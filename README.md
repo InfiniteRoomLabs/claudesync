@@ -136,15 +136,32 @@ EXPORT OPTIONS                  (export, export-all, projects export)
     --preserve <glob>           keep locally-added files across re-syncs
                                 (repeatable; --format files; CHANGELOG.md always kept)
 
+EXPORT-ALL PARALLELISM          (export-all only)
+    --workers <n>               max concurrent workers / pool ceiling (default: 8)
+    --min-workers <n>           floor the controller backs off to (default: 1)
+    --start-workers <n>         initial skeptical worker count (default: 2)
+    --project-workers <n>       optional per-project concurrency cap
+    --no-parallel               sequential mode (1 worker)
+
     -h, --help                  --version
 ```
+
+export-all fetches conversations in parallel through an adaptive worker pool: it
+starts conservative, ramps up on sustained success, and backs off (halving
+concurrency and waiting out the server's reset window) the moment claude.ai
+rate-limits. The same settings can come from env vars (CLAUDESYNC_WORKERS,
+CLAUDESYNC_MIN_WORKERS, CLAUDESYNC_START_WORKERS, CLAUDESYNC_PROJECT_WORKERS) or
+a .claudesyncrc.json file in the working directory or home directory.
+Precedence: CLI flag > env var > config file > built-in default.
 
 ```sh
 # Examples
 claudesync ls                                   # list conversations
 claudesync export <conversation-id>             # export to a git repo
 claudesync export <conversation-id> --output ./my-export --format files
-claudesync export-all --format files            # whole org
+claudesync export-all --format files            # whole org (parallel by default)
+claudesync export-all --workers 4               # cap parallelism at 4 workers
+claudesync export-all --no-parallel             # sequential (one at a time)
 claudesync search "typescript generics"
 claudesync projects
 claudesync ls --json --query "[?starred]"       # machine output, JMESPath-filtered

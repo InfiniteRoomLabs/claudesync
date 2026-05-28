@@ -101,6 +101,49 @@ export { fetchAndBuild } from "./sync/fetch.js";
 export type { ReplaceWithPreserveOptions } from "./sync/files-mode.js";
 export { replaceWithPreserve, walkRelative, expandPreserveForProject } from "./sync/files-mode.js";
 
+// Concurrency / backpressure
+export type {
+  RequestLimiter,
+  Clock,
+  AdaptiveControllerOptions,
+  PoolTask,
+  WorkerPoolOptions,
+} from "./concurrency/index.js";
+export {
+  FixedGapLimiter,
+  defaultSleep,
+  defaultClock,
+  AdaptiveController,
+  MinPriorityQueue,
+  WorkerPool,
+} from "./concurrency/index.js";
+
+// Concurrency config
+export type {
+  ConcurrencyConfig,
+  ConcurrencyFlags,
+} from "./config/index.js";
+export {
+  ConcurrencyConfigSchema,
+  CONFIG_FILENAME,
+  loadConfigFile,
+  resolveConcurrencyConfig,
+} from "./config/index.js";
+
+// Parallel org sync
+export type {
+  ProgressEvent,
+  RunOrgSyncOptions,
+  RunOrgSyncResult,
+} from "./sync/scheduler.js";
+export { runOrgSync } from "./sync/scheduler.js";
+export type { ProjectConvBuilt } from "./sync/project-sync.js";
+export {
+  assembleProjectBundle,
+  writeProjectBundle,
+  buildProjectReadme,
+} from "./sync/project-sync.js";
+
 // Naming helpers
 export { slugify, safeSlug, displayName } from "./util/naming.js";
 

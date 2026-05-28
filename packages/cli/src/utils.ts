@@ -2,6 +2,7 @@ import {
   EnvAuth,
   ClaudeSyncClient,
   AuthError,
+  type ClientOptions,
 } from "@infinite-room-labs/claudesync-core";
 import { search } from "@metrichor/jmespath";
 import type { JSONValue } from "@metrichor/jmespath";
@@ -9,11 +10,16 @@ import type { JSONValue } from "@metrichor/jmespath";
 /**
  * Creates an authenticated ClaudeSyncClient from environment variables.
  * Exits with a user-friendly message if CLAUDE_AI_COOKIE is not set.
+ *
+ * Pass `options.limiter` (a shared AdaptiveController) to opt into parallel-sync
+ * backpressure; omit it and the client uses the default fixed-gap throttle.
  */
-export function createClient(): { auth: EnvAuth; client: ClaudeSyncClient } {
+export function createClient(
+  options?: ClientOptions
+): { auth: EnvAuth; client: ClaudeSyncClient } {
   try {
     const auth = new EnvAuth();
-    const client = new ClaudeSyncClient(auth);
+    const client = new ClaudeSyncClient(auth, options);
     return { auth, client };
   } catch (error) {
     if (error instanceof AuthError) {

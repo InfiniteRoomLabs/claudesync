@@ -1,21 +1,75 @@
 import { Command } from "commander";
 import { resolve } from "node:path";
-import { existsSync, writeFileSync } from "node:fs";
 import {
-  exportToGit,
-  fetchAndBuild,
-  syncConversation,
-  safeSlug,
-  displayName,
-  replaceWithPreserve,
-  expandPreserveForProject,
+  AdaptiveController,
+  resolveConcurrencyConfig,
+  runOrgSync,
   type ExportFormat,
-  type GitBundleCommit,
+  type ProgressEvent,
 } from "@infinite-room-labs/claudesync-core";
 import { createClient, resolveOrgId } from "../utils.js";
 
+const parseIntArg = (value: string): number => {
+  const n = Number.parseInt(value, 10);
+  if (!Number.isFinite(n)) {
+    throw new Error(`expected an integer, got "${value}"`);
+  }
+  return n;
+};
+
+function actionTag(action: string): string {
+  switch (action) {
+    case "skipped":
+      return "Skipping (same)";
+    case "skipped-existing":
+      return "Skipping (exists)";
+    case "incremental":
+      return "Updated";
+    case "full":
+    case "exported":
+    default:
+      return "Exported";
+  }
+}
+
+function renderProgress(e: ProgressEvent): void {
+  switch (e.type) {
+    case "org-start":
+      console.log(
+        `  ${e.projectCount} project(s), ${e.conversationCount} conversation(s) total`
+      );
+      break;
+    case "project-start":
+      console.log(
+        `[project] ${e.project} (${e.docs} doc(s), ${e.conversations} conversation(s))`
+      );
+      break;
+    case "project-skipped":
+      console.log(`[project] Skipping (exists): ${e.project}`);
+      break;
+    case "project-done":
+      console.log(`[project] Written: ${e.project}`);
+      break;
+    case "conv-done":
+      console.log(
+        `[conv ${e.completed}/${e.total}] ${actionTag(e.action)}: ${e.displayName}`
+      );
+      break;
+    case "throttle":
+      console.log(
+        `  Rate limited -> backing off to ${e.limit} worker(s), resuming in ${e.resumeInSec}s`
+      );
+      break;
+    case "error":
+      console.error(`  ERROR ${e.displayName}: ${e.message}`);
+      break;
+  }
+}
+
 export const exportAllCommand = new Command("export-all")
-  .description("Export entire organization: all projects (with knowledge + conversations) and standalone conversations")
+  .description(
+    "Export entire organization: all projects (with knowledge + conversations) and standalone conversations"
+  )
   .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
   .option("--output <path>", "Output directory (default: ./org-export)")
   .option("--format <format>", "Output format: git, json, or files", "files")
@@ -24,224 +78,135 @@ export const exportAllCommand = new Command("export-all")
   .option("--skip-artifacts", "Skip downloading artifacts (faster)")
   .option(
     "--skip-existing",
-    "Skip conversations/projects whose output directory already exists",
+    "Skip conversations/projects whose output directory already exists"
   )
   .option(
     "--skip-same",
-    "Skip conversations unchanged since the last sync (uses .claudesync-state.json sidecar). Mutually exclusive with --skip-existing.",
+    "Skip conversations unchanged since the last sync (uses .claudesync-state.json sidecar). Mutually exclusive with --skip-existing."
   )
   .option(
     "--preserve <glob>",
     "Glob (POSIX-style, relative to each conversation dir) of locally-added files to keep across re-syncs in --format files. Repeatable. CHANGELOG.md is always preserved. Examples: --preserve INDEX.md --preserve 'notes/**'",
     (value: string, previous: string[] = []) => previous.concat(value),
-    [] as string[],
+    [] as string[]
   )
-  .action(async (options: {
-    org?: string;
-    output?: string;
-    format: ExportFormat;
-    authorName: string;
-    authorEmail: string;
-    skipArtifacts?: boolean;
-    skipExisting?: boolean;
-    skipSame?: boolean;
-    preserve: string[];
-  }) => {
-    if (options.skipSame && options.skipExisting) {
-      console.error("error: --skip-same and --skip-existing are mutually exclusive");
-      process.exit(1);
-    }
-
-    const { auth, client } = createClient();
-    const orgId = await resolveOrgId(auth, options.org);
-    const author = { name: options.authorName, email: options.authorEmail };
-    const outputRoot = resolve(options.output ?? "./org-export");
-
-    console.log("Fetching organization data...");
-    const [projects, allConversations] = await Promise.all([
-      client.listProjects(orgId),
-      client.listConversationsAll(orgId),
-    ]);
-    console.log(`  ${projects.length} project(s), ${allConversations.length} conversation(s) total`);
-
-    const projectConvUuids = new Set<string>();
-
-    // 1. Projects (knowledge + their conversations bundled into one repo).
-    for (let pi = 0; pi < projects.length; pi++) {
-      const project = projects[pi];
-      const projectProgress = `[project ${pi + 1}/${projects.length}]`;
-      const projectLabel = displayName(project.name, project.uuid);
-      const projectSlug = safeSlug(project.name, project.uuid);
-      const projectPath = resolve(outputRoot, "projects", projectSlug);
-
-      if (options.skipExisting && existsSync(projectPath)) {
-        console.log(`${projectProgress} Skipping (exists): ${projectLabel}`);
-        const projConvs = await client.getProjectConversations(orgId, project.uuid);
-        for (const c of projConvs) projectConvUuids.add(c.uuid);
-        continue;
+  .option(
+    "--workers <n>",
+    "Maximum concurrent workers (pool ceiling). Env: CLAUDESYNC_WORKERS",
+    parseIntArg
+  )
+  .option(
+    "--min-workers <n>",
+    "Minimum workers the backpressure controller will fall back to. Env: CLAUDESYNC_MIN_WORKERS",
+    parseIntArg
+  )
+  .option(
+    "--start-workers <n>",
+    "Initial (skeptical) worker count before ramping up. Env: CLAUDESYNC_START_WORKERS",
+    parseIntArg
+  )
+  .option(
+    "--project-workers <n>",
+    "Optional per-project concurrency cap. Env: CLAUDESYNC_PROJECT_WORKERS",
+    parseIntArg
+  )
+  .option("--no-parallel", "Disable parallelism (sequential, 1 worker)")
+  .action(
+    async (options: {
+      org?: string;
+      output?: string;
+      format: ExportFormat;
+      authorName: string;
+      authorEmail: string;
+      skipArtifacts?: boolean;
+      skipExisting?: boolean;
+      skipSame?: boolean;
+      preserve: string[];
+      workers?: number;
+      minWorkers?: number;
+      startWorkers?: number;
+      projectWorkers?: number;
+      parallel: boolean;
+    }) => {
+      if (options.skipSame && options.skipExisting) {
+        console.error(
+          "error: --skip-same and --skip-existing are mutually exclusive"
+        );
+        process.exit(1);
       }
 
-      console.log(`${projectProgress} ${projectLabel}`);
-      const docs = await client.getProjectDocs(orgId, project.uuid);
-      const projConvs = await client.getProjectConversations(orgId, project.uuid);
-      for (const c of projConvs) projectConvUuids.add(c.uuid);
-
-      console.log(`  ${docs.length} knowledge doc(s), ${projConvs.length} conversation(s)`);
-
-      const commits: GitBundleCommit[] = [];
-      const projectFiles: Record<string, string | Uint8Array> = {};
-      projectFiles["README.md"] = buildProjectReadme(project, docs.length, projConvs.length);
-      for (const doc of docs) {
-        const safeName = doc.file_name.replace(/[/\\]/g, "_");
-        projectFiles[`knowledge/${safeName}`] = doc.content;
-      }
-      commits.push({
-        message: `Export project: ${projectLabel}`,
-        timestamp: project.created_at,
-        author,
-        files: projectFiles,
+      const config = resolveConcurrencyConfig({
+        workers: options.workers,
+        minWorkers: options.minWorkers,
+        startWorkers: options.startWorkers,
+        projectWorkers: options.projectWorkers,
+        noParallel: options.parallel === false,
       });
 
-      // Conversations within the project: route through fetchAndBuild for
-      // identical name/slug fallbacks and tree handling. --skip-same does not
-      // apply at this layer (the project repo is rebuilt as a unit each run).
-      for (let ci = 0; ci < projConvs.length; ci++) {
-        const convSummary = projConvs[ci];
-        const convProgress = `  [${ci + 1}/${projConvs.length}]`;
+      const controller = new AdaptiveController({
+        min: config.pool.min,
+        max: config.pool.max,
+        start: config.pool.start,
+        increaseAfter: config.ramp.increaseAfter,
+        decreaseFactor: config.ramp.decreaseFactor,
+        minGapMs: config.request.minGapMs,
+      });
 
-        const built = await fetchAndBuild(client, orgId, convSummary, {
-          authorName: options.authorName,
-          authorEmail: options.authorEmail,
-          skipArtifacts: options.skipArtifacts,
-          multiBranch: true,
-        });
-        console.log(`${convProgress} ${built.displayName}`);
+      const { auth, client } = createClient({ limiter: controller });
+      const orgId = await resolveOrgId(auth, options.org);
+      const outputRoot = resolve(options.output ?? "./org-export");
 
-        const convDir = `conversations/${built.slug}`;
-        for (const commit of built.bundle.commits) {
-          const remappedFiles: Record<string, string | Uint8Array> = {};
-          for (const [p, content] of Object.entries(commit.files)) {
-            remappedFiles[`${convDir}/${p}`] = content;
-          }
-          commits.push({ ...commit, files: remappedFiles });
-        }
-      }
-
-      const bundle = {
-        metadata: {
-          conversationId: project.uuid,
-          conversationName: projectLabel,
-          model: null,
-          createdAt: project.created_at,
-          exportedAt: new Date().toISOString(),
-        },
-        commits,
-      };
-
-      await writeProjectBundle(bundle, projectPath, options.format, options.preserve);
-    }
-
-    // 2. Standalone conversations -- --skip-same applies here per conversation.
-    const standaloneConvs = allConversations.filter(
-      (c) => !c.project_uuid && !projectConvUuids.has(c.uuid),
-    );
-    console.log(`\n${standaloneConvs.length} standalone conversation(s) to export`);
-
-    for (let ci = 0; ci < standaloneConvs.length; ci++) {
-      const convSummary = standaloneConvs[ci];
-      const convProgress = `[conv ${ci + 1}/${standaloneConvs.length}]`;
-      const convPath = resolve(
-        outputRoot,
-        "conversations",
-        safeSlug(convSummary.name, convSummary.uuid),
+      console.log("Fetching organization data...");
+      console.log(
+        `  Workers: start ${config.pool.start}, min ${config.pool.min}, max ${config.pool.max}` +
+          (config.projectConcurrency
+            ? `, per-project cap ${config.projectConcurrency}`
+            : "")
       );
 
+      const abortController = new AbortController();
+      const onSigint = () => {
+        console.error(
+          "\nInterrupted -- no new work will start; finishing in-flight conversations, then stopping..."
+        );
+        abortController.abort();
+      };
+      process.on("SIGINT", onSigint);
+
       try {
-        const result = await syncConversation(client, orgId, convSummary, convPath, {
+        const result = await runOrgSync(client, orgId, {
+          outputRoot,
           format: options.format,
           authorName: options.authorName,
           authorEmail: options.authorEmail,
-          skipSame: options.skipSame,
-          skipExisting: options.skipExisting,
           skipArtifacts: options.skipArtifacts,
+          skipExisting: options.skipExisting,
+          skipSame: options.skipSame,
           preserve: options.preserve,
+          controller,
+          projectConcurrency: config.projectConcurrency,
+          maxRetries: config.request.maxRetries,
+          signal: abortController.signal,
+          onProgress: renderProgress,
         });
-        const tag =
-          result.action === "skipped" ? "Skipping (same)" :
-          result.action === "skipped-existing" ? "Skipping (exists)" :
-          result.action === "incremental" ? "Updated" : "Exported";
-        console.log(`${convProgress} ${tag}: ${result.displayName}`);
-      } catch (err) {
-        const fallback = displayName(convSummary.name, convSummary.uuid);
-        console.error(`${convProgress} ERROR exporting ${fallback}: ${err instanceof Error ? err.message : String(err)}`);
+
+        const aborted = abortController.signal.aborted;
+        console.log(
+          aborted ? `\nOrg export stopped (interrupted).` : `\nOrg export complete!`
+        );
+        console.log(`  Output: ${outputRoot}`);
+        console.log(`  Projects: ${result.projects}`);
+        console.log(`  Standalone conversations: ${result.standalone}`);
+        if (result.errors > 0) {
+          console.log(`  Errors: ${result.errors}`);
+        }
+        if (aborted) {
+          process.exitCode = 130; // 128 + SIGINT
+        } else if (result.errors > 0) {
+          process.exitCode = 1;
+        }
+      } finally {
+        process.off("SIGINT", onSigint);
       }
     }
-
-    console.log(`\nOrg export complete!`);
-    console.log(`  Output: ${outputRoot}`);
-    console.log(`  Projects: ${projects.length}`);
-    console.log(`  Standalone conversations: ${standaloneConvs.length}`);
-  });
-
-async function writeProjectBundle(
-  bundle: { metadata: { conversationId: string; conversationName: string; model: string | null; createdAt: string; exportedAt: string }; commits: GitBundleCommit[] },
-  outputPath: string,
-  format: ExportFormat,
-  preserve: readonly string[],
-): Promise<void> {
-  if (format === "json") {
-    writeFileSync(outputPath + ".json", JSON.stringify(bundle, null, 2), "utf-8");
-    return;
-  }
-  // Files / git mode: rebuild the project tree from scratch, but route through
-  // replaceWithPreserve so locally-added files (INDEX.md at project + nested
-  // conversation scope, hand-written notes, etc.) survive the re-sync.
-  //
-  // preserveGlobs are matched relative to the project root, but conversation
-  // files live under conversations/<slug>/. expandPreserveForProject adds a
-  // nested-depth variant of each pattern so a bare `--preserve INDEX.md` also
-  // rescues every nested conversation's INDEX.md (not just the project root's).
-  await replaceWithPreserve({
-    outputPath,
-    writeFresh: async () => {
-      await exportToGit(bundle, outputPath);
-      if (format === "files") {
-        const { rmSync } = await import("node:fs");
-        rmSync(resolve(outputPath, ".git"), { recursive: true, force: true });
-      }
-    },
-    preserveGlobs: expandPreserveForProject(preserve),
-  });
-}
-
-function buildProjectReadme(
-  project: { name: string; uuid: string; description?: string | null; created_at: string; updated_at: string },
-  docCount: number,
-  convCount: number,
-): string {
-  const lines: string[] = [];
-  lines.push(`# ${displayName(project.name, project.uuid)}`);
-  lines.push("");
-  if (project.description) {
-    lines.push(project.description);
-    lines.push("");
-  }
-  lines.push(`- **Project ID:** ${project.uuid}`);
-  lines.push(`- **Created:** ${project.created_at}`);
-  lines.push(`- **Updated:** ${project.updated_at}`);
-  lines.push(`- **Knowledge docs:** ${docCount}`);
-  lines.push(`- **Conversations:** ${convCount}`);
-  lines.push("");
-  lines.push("## Structure");
-  lines.push("");
-  lines.push("```");
-  lines.push("knowledge/          # Project knowledge documents");
-  lines.push("conversations/      # Exported conversations with artifacts");
-  lines.push("```");
-  lines.push("");
-  lines.push("---");
-  lines.push("");
-  lines.push("Exported by [ClaudeSync](https://github.com/infiniteroomlabs/claudesync)");
-  lines.push("");
-  return lines.join("\n");
-}
+  );

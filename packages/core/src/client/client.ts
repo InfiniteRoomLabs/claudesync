@@ -21,52 +21,54 @@ import type {
 } from "../models/types.js";
 import { z } from "zod";
 import { basename } from "node:path";
+import { FixedGapLimiter, type RequestLimiter } from "../concurrency/limiter.js";
 
 export interface ClientOptions {
   /**
-   * Delay in milliseconds between API requests to avoid rate limiting.
-   * Default: 300ms.
+   * Delay in milliseconds between API requests, used by the default fixed-gap
+   * limiter when no `limiter` is supplied. Default: 300ms.
    */
   rateLimitDelayMs?: number;
+  /**
+   * Rate limiter consulted before every request. When omitted, a
+   * {@link FixedGapLimiter} reproduces the legacy fixed-delay behavior. Pass a
+   * shared {@link AdaptiveController} to participate in parallel-sync
+   * backpressure (pacing + AIMD + pause-on-throttle).
+   */
+  limiter?: RequestLimiter;
 }
 
 /** Expected path prefix for wiggle artifact files */
 const ARTIFACT_PATH_PREFIX = "/mnt/user-data/";
 
 export class ClaudeSyncClient {
-  private readonly rateLimitDelayMs: number;
-  private lastRequestTime = 0;
+  private readonly limiter: RequestLimiter;
 
   constructor(
     private readonly auth: AuthProvider,
     options?: ClientOptions
   ) {
-    this.rateLimitDelayMs = options?.rateLimitDelayMs ?? 300;
+    this.limiter =
+      options?.limiter ?? new FixedGapLimiter(options?.rateLimitDelayMs ?? 300);
   }
 
-  private async throttle(): Promise<void> {
-    const now = Date.now();
-    const elapsed = now - this.lastRequestTime;
-    if (elapsed < this.rateLimitDelayMs) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, this.rateLimitDelayMs - elapsed)
-      );
-    }
-    this.lastRequestTime = Date.now();
+  private parseRateLimit(body: unknown): RateLimitError {
+    const resetsAt =
+      (body as { error?: { resets_at?: number } } | null)?.error?.resets_at ??
+      Math.floor(Date.now() / 1000) + 60;
+    this.limiter.onThrottle(resetsAt);
+    return new RateLimitError(resetsAt);
   }
 
   private async request(url: string): Promise<unknown> {
-    await this.throttle();
+    await this.limiter.acquireRequestSlot();
 
     const headers = await this.auth.getHeaders();
     const response = await fetch(url, { headers });
 
     if (response.status === 429) {
       const body = await response.json().catch(() => null);
-      const resetsAt =
-        body?.error?.resets_at ??
-        Math.floor(Date.now() / 1000) + 60;
-      throw new RateLimitError(resetsAt);
+      throw this.parseRateLimit(body);
     }
 
     if (!response.ok) {
@@ -76,21 +78,19 @@ export class ClaudeSyncClient {
       );
     }
 
+    this.limiter.onRequestSuccess();
     return response.json();
   }
 
   private async requestRaw(url: string): Promise<Response> {
-    await this.throttle();
+    await this.limiter.acquireRequestSlot();
 
     const headers = await this.auth.getHeaders();
     const response = await fetch(url, { headers });
 
     if (response.status === 429) {
       const body = await response.json().catch(() => null);
-      const resetsAt =
-        body?.error?.resets_at ??
-        Math.floor(Date.now() / 1000) + 60;
-      throw new RateLimitError(resetsAt);
+      throw this.parseRateLimit(body);
     }
 
     if (!response.ok) {
@@ -100,6 +100,7 @@ export class ClaudeSyncClient {
       );
     }
 
+    this.limiter.onRequestSuccess();
     return response;
   }
 
