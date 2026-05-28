@@ -38,8 +38,8 @@ claudesync-setup uninstall --mcp       # remove just the MCP wrapper
 claudesync-setup uninstall             # remove everything
 ```
 
-| | |
-|---|---|
+| Option | What it does |
+|--------|--------------|
 | **Subcommands** | `install` (default) / `update` / `uninstall` |
 | **Components** (omit = all) | `--synchronizer[=VER]` (the `claudesync` CLI) / `--mcp[=VER]` (MCP server) / `--broker` (host cookie reader only) |
 | **Versions** | positional `VERSION` is a default applied per component; `--mcp=VER` overrides it. Components resolve against their **own** image and are not assumed in lockstep. |
