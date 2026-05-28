@@ -38,15 +38,34 @@ claudesync-setup uninstall --mcp       # remove just the MCP wrapper
 claudesync-setup uninstall             # remove everything
 ```
 
-| Option | What it does |
-|--------|--------------|
-| **Subcommands** | `install` (default) / `update` / `uninstall` |
-| **Components** (omit = all) | `--synchronizer[=VER]` (the `claudesync` CLI) / `--mcp[=VER]` (MCP server) / `--broker` (host cookie reader only) |
-| **Versions** | positional `VERSION` is a default applied per component; `--mcp=VER` overrides it. Components resolve against their **own** image and are not assumed in lockstep. |
-| **`--target`** | which MCP client to configure: `claude-code` / `claude-desktop` / `mcp-json` (omit = prompt; non-interactive skips with instructions) |
-| **`--force`** | don't prompt before replacing files |
-| **`--dry-run`** | print every action, change nothing |
-| **`--pin-digest`** | resolve image tags to `@sha256` digests and pin the wrappers (reproducible / digest-enforcing Docker postures) |
+```
+SYNOPSIS
+    claudesync-setup [SUBCOMMAND] [VERSION] [COMPONENTS] [OPTIONS]
+
+SUBCOMMANDS
+    install      (default) install components
+    update       re-install at a (possibly new) version
+    uninstall    remove components
+
+COMPONENTS   (omit all => everything)
+    --synchronizer[=VER]   the `claudesync` CLI wrapper + image
+    --mcp[=VER]            the MCP server wrapper + image
+    --broker               the host-side cookie reader only
+
+OPTIONS
+    --target=TARGET   MCP client to configure: claude-code | claude-desktop | mcp-json
+                      (omit => prompt; non-interactive skips with instructions)
+    --pin-digest      resolve image tags to @sha256 and pin the wrappers
+                      (auto-enabled when the Docker daemon refuses tag pulls)
+    --dry-run         print every action, change nothing
+    --force           do not prompt before replacing files
+    -h, --help        show help
+
+VERSIONS
+    positional VERSION is a default applied per component; --mcp=VER overrides it.
+    Each component resolves against its OWN image -- versions are not assumed
+    in lockstep.
+```
 
 **PowerShell** uses native switches:
 
