@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-05-28
+
+### Added
+- Parallel `export-all` with an adaptive worker pool. Conversation fetches now
+  run concurrently through one priority queue (project discovery, then
+  per-project conversations, then standalone conversations fill leftover
+  worker slots). An AIMD controller starts conservative, ramps up on sustained
+  success, and backs off -- halving concurrency and honoring the server's
+  `resets_at` -- on 429/529.
+- New `export-all` flags: `--workers`, `--min-workers`, `--start-workers`,
+  `--project-workers`, `--no-parallel`, with `CLAUDESYNC_*` env equivalents and
+  optional `.claudesyncrc.json` config (precedence: flag > env > file > default).
+- SIGINT-safe shutdown for `export-all` (stops scheduling new work, drains
+  in-flight) with meaningful exit codes (130 on interrupt, 1 on errors).
+
+### Fixed
+- `export-all --format json` no longer fails with ENOENT when writing a project
+  bundle into a not-yet-created `projects/` directory.
+- A project whose conversation hard-fails is still written with its surviving
+  conversations instead of being silently skipped.
+- Moved pnpm `onlyBuiltDependencies` from the `package.json` `pnpm` field to
+  `pnpm-workspace.yaml` (pnpm 11 no longer reads the former).
+
+### Notes
+- Single-shot commands (`ls`, `export`, `search`) and the MCP server are
+  unchanged: with no limiter injected the client keeps its legacy fixed throttle.
+
 ## [0.7.1] - 2026-05-27
 
 ### Added

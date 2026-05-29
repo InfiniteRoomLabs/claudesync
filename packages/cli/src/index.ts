@@ -12,7 +12,7 @@ const program = new Command();
 program
   .name("claudesync")
   .description("ClaudeSync -- Export claude.ai conversations as git repositories")
-  .version("0.3.0");
+  .version("0.8.0");
 
 program.addCommand(lsCommand);
 program.addCommand(exportCommand);
