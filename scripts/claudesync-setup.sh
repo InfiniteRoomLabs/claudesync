@@ -65,6 +65,7 @@ DRY_RUN=0
 PIN_DIGEST=0
 MCP_TARGET=""
 
+# Print usage text to stdout.
 usage() {
     cat <<'EOF'
 claudesync-setup -- manage the ClaudeSync install
@@ -108,6 +109,7 @@ EOF
 # ---------------------------------------------------------------------------
 # Arg parsing
 # ---------------------------------------------------------------------------
+# Parse CLI arguments into global state variables (SUBCMD, VER_*, DO_*, flags).
 parse_args() {
     for _a in "$@"; do
         case "${_a}" in
@@ -240,6 +242,8 @@ confirm() {
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
 
+# Extract a single file from a Docker image layer without running the container.
+# Args: $1 = image ref, $2 = path inside image, $3 = destination path.
 extract_from_image() {
     _img="$1"; _img_path="$2"; _dest="$3"
     command -v docker >/dev/null 2>&1 || return 1
@@ -279,6 +283,8 @@ fetch_asset() {
 # ---------------------------------------------------------------------------
 COMPLETION_MARKER="# claudesync completions"
 
+# Append LINE to RC if TAG not already present, preventing duplicate sourcing.
+# Args: $1 = rc file, $2 = line to append, $3 = idempotency tag.
 _ensure_rc_line() {
     _rc="$1"; _line="$2"; _tag="$3"
     if [ "${DRY_RUN}" = "1" ]; then info "[dry-run] ensure '${_line}' in ${_rc}"; return 0; fi
@@ -322,6 +328,8 @@ install_completion() {
     esac
 }
 
+# Remove all completion files for CMD across bash, zsh, and fish.
+# Arg: $1 = command base name.
 remove_completion() {
     _cmd="$1"
     run rm -f "${COMP_DIR}/${_cmd}.bash" "${COMP_DIR}/_${_cmd}" \
@@ -340,6 +348,8 @@ strip_rc_completion_lines() {
 # ---------------------------------------------------------------------------
 # Component: broker
 # ---------------------------------------------------------------------------
+
+# Install harvest-cookie.sh to DATA_DIR and make it executable.
 install_broker() {
     info "Installing cookie broker ..."
     run mkdir -p "${DATA_DIR}"
@@ -351,6 +361,7 @@ install_broker() {
     success "Broker -> ${BROKER_DEST}"
 }
 
+# Remove the cookie broker and its cached rookie binary.
 uninstall_broker() {
     info "Removing cookie broker + rookie cache ..."
     run rm -f "${BROKER_DEST}"
@@ -372,6 +383,7 @@ sync_function_body() {
     rm -f "${_tpl_tmp}"
 }
 
+# Echo the rc file path for the running shell, or "fish" for fish shell.
 detect_rc() {
     case "${SHELL:-}" in
         */zsh)  echo "${HOME}/.zshrc"; return ;;
@@ -381,6 +393,8 @@ detect_rc() {
     echo "${HOME}/.bashrc"
 }
 
+# Strip the claudesync() function block (bounded by MARKER) from an rc file.
+# Arg: $1 = rc file path.
 remove_sync_block() {
     _rc="$1"
     [ -f "${_rc}" ] || return 0
@@ -394,6 +408,7 @@ remove_sync_block() {
     ' '${_rc}' > '${_tmp}' && mv '${_tmp}' '${_rc}'"
 }
 
+# Install the claudesync shell function to the user's rc file or fish functions dir.
 install_synchronizer() {
     _ref="$(resolve_ref "${IMAGE_SYNC}" "${VER_SYNC}")"
     info "Installing synchronizer (image ref: ${_ref}) ..."
@@ -404,6 +419,7 @@ install_synchronizer() {
     fi
 
     _rc="$(detect_rc)"
+
     if [ "${_rc}" = "fish" ]; then
         install_synchronizer_fish "${_ref}"
         return
@@ -420,6 +436,8 @@ install_synchronizer() {
     success "Synchronizer -> ${_rc}"
 }
 
+# Write the claudesync fish function file with the image ref substituted.
+# Arg: $1 = resolved image ref.
 install_synchronizer_fish() {
     _ref="$1"
     _dir="${HOME}/.config/fish/functions"
@@ -438,6 +456,7 @@ install_synchronizer_fish() {
     success "Synchronizer (fish) -> ${_file}"
 }
 
+# Remove the claudesync function from the shell config and clean up completions.
 uninstall_synchronizer() {
     info "Removing synchronizer ..."
     _rc="$(detect_rc)"
@@ -454,6 +473,8 @@ uninstall_synchronizer() {
 # ---------------------------------------------------------------------------
 # Component: mcp (wrapper + config)  -- delegates cookie reading to the broker
 # ---------------------------------------------------------------------------
+
+# Install the MCP wrapper script to BIN_DIR and configure the MCP client.
 install_mcp() {
     _ref="$(resolve_ref "${IMAGE_MCP}" "${VER_MCP}")"
     info "Installing MCP wrapper (image ref: ${_ref}) ..."
@@ -479,6 +500,7 @@ install_mcp() {
     configure_mcp
 }
 
+# Remove the MCP wrapper script. Leaves MCP client config entries in place.
 uninstall_mcp() {
     info "Removing MCP wrapper ..."
     run rm -f "${MCP_WRAPPER}"
@@ -487,13 +509,18 @@ uninstall_mcp() {
 }
 
 # --- MCP client config merge (claude-code / claude-desktop / mcp-json) ---
+# Echo the JSON config object for the claudesync MCP server entry.
 mcp_config_block() { printf '{"command":"%s","args":[]}' "${MCP_WRAPPER}"; }
 
+# Upsert the claudesync MCP entry into a config file using jq.
+# Args: $1 = file, $2 = server name, $3 = JSON config block.
 _merge_mcp_jq() {
     _file="$1"; _name="$2"; _block="$3"; _tmp="${_file}.claudesync.tmp"
     jq --arg n "${_name}" --argjson b "${_block}" '.mcpServers[$n]=$b' "${_file}" > "${_tmp}" && mv "${_tmp}" "${_file}"
 }
 
+# Upsert the claudesync MCP entry using awk/grep; fallback when jq is absent.
+# Args: $1 = file, $2 = server name, $3 = JSON config block.
 _merge_mcp_sed() {
     _file="$1"; _name="$2"; _block="$3"
     _entry="    \"${_name}\": ${_block}"
@@ -515,6 +542,8 @@ _merge_mcp_sed() {
     fi
 }
 
+# Add or replace the claudesync entry in an MCP client config JSON file.
+# Arg: $1 = path to the config file.
 merge_mcp_server() {
     _file="$1"
     if [ "${DRY_RUN}" = "1" ]; then info "[dry-run] add 'claudesync' MCP entry to ${_file}"; return 0; fi
@@ -530,6 +559,7 @@ merge_mcp_server() {
     success "MCP server entry written to ${_file}"
 }
 
+# Interactively prompt the user to choose an MCP client target; echo the choice.
 select_mcp_target() {
     printf "\n  Configure ClaudeSync MCP for:\n" >&2
     printf "    1) Claude Code     (~/.claude.json)\n" >&2
@@ -541,6 +571,7 @@ select_mcp_target() {
     case "${_c}" in 1) echo "claude-code" ;; 2) echo "claude-desktop" ;; 3) echo "mcp-json" ;; *) echo "skip" ;; esac
 }
 
+# Write the MCP server entry to the target client config (--target or prompted).
 configure_mcp() {
     _t="${MCP_TARGET}"
     if [ -z "${_t}" ]; then
@@ -608,6 +639,7 @@ EOF
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
+# Run the install/update flow: broker, synchronizer, MCP, self-install, state.
 do_install() {
     command -v docker >/dev/null 2>&1 || die "Docker is required. https://docs.docker.com/get-docker/"
     [ "${DO_BROKER}" = "1" ] && install_broker
@@ -621,6 +653,7 @@ do_install() {
     success "Done (${SUBCMD})."
 }
 
+# Run the uninstall flow: MCP, synchronizer, broker, self (when full uninstall).
 do_uninstall() {
     [ "${DO_MCP}" = "1" ]    && uninstall_mcp
     [ "${DO_SYNC}" = "1" ]   && uninstall_synchronizer
@@ -633,6 +666,7 @@ do_uninstall() {
     success "Done (uninstall)."
 }
 
+# Entry point: parse args and dispatch to do_install or do_uninstall.
 main() {
     parse_args "$@"
     case "${SUBCMD}" in

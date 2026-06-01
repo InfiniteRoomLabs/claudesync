@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inline function bodies to standalone template files in `scripts/lib/`.
   Broker path now resolved at runtime; only the image ref (`__REF__`) is
   substituted at install time.
+- Added doc comments to every function in both setup scripts.
 
 ## [0.8.0] - 2026-05-28
 

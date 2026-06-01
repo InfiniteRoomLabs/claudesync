@@ -53,12 +53,14 @@ $StateFile  = Join-Path $DataDir "setup-state.json"
 $Marker = "# claudesync -- installed by https://github.com/InfiniteRoomLabs/claudesync"
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { $null }
 
+# Colored output helpers: info (cyan), success (green), warn (yellow), dry-run (yellow), fatal (red+exit).
 function Write-Info    { param([string]$m) Write-Host "[claudesync-setup] $m" -ForegroundColor Cyan }
 function Write-Success { param([string]$m) Write-Host "[claudesync-setup] $m" -ForegroundColor Green }
 function Write-Warn    { param([string]$m) Write-Host "[claudesync-setup] $m" -ForegroundColor Yellow }
 function Write-DryRun  { param([string]$m) Write-Host "[dry-run] $m" -ForegroundColor Yellow }
 function Stop-Setup    { param([string]$m) Write-Host "[claudesync-setup] $m" -ForegroundColor Red; exit 1 }
 
+# Print usage text to the host.
 function Show-Usage {
 @"
 claudesync-setup -- manage the ClaudeSync install (Windows)
@@ -85,6 +87,7 @@ $GlobalVersion = ""
 $DoSync = $false; $DoMcp = $false; $DoBroker = $false
 $ExplicitComponents = $false
 
+# Parse script parameters into script-scope state variables ($Sub, $DoSync, etc.).
 function Resolve-Args {
     if ($Help) { Show-Usage; exit 0 }
 
@@ -117,6 +120,7 @@ function Resolve-Args {
     }
 }
 
+# Prompt for y/N confirmation; returns $true when -Force or -DryRun is set.
 function Confirm-Action {
     param([string]$Message)
     if ($Force -or $DryRun) { return $true }
@@ -161,6 +165,7 @@ function Invoke-PullOrDetect {
     return $true
 }
 
+# Extract a single file from a Docker image layer without running the container.
 function Copy-FromImage {
     param([string]$ImageTag, [string]$ImagePath, [string]$Dest)
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
@@ -189,9 +194,11 @@ function Get-Asset {
     } catch { Write-Warn "Download failed: $RawBase/$RepoPath"; return $false }
 }
 
+# Create a directory if it does not exist; dry-run aware.
 function Ensure-Dir { param([string]$d) if ($DryRun) { Write-DryRun "mkdir $d" } elseif (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null } }
 
 # --- broker ---
+# Install Harvest-Cookie.ps1 to $DataDir for use by the synchronizer and MCP wrapper.
 function Install-Broker {
     Write-Info "Installing cookie broker ..."
     Ensure-Dir $DataDir
@@ -200,6 +207,7 @@ function Install-Broker {
     }
     Write-Success "Broker -> $BrokerDest"
 }
+# Remove the cookie broker and its cached rookie-cli.exe binary.
 function Uninstall-Broker {
     Write-Info "Removing cookie broker + rookie cache ..."
     if ($DryRun) { Write-DryRun "rm $BrokerDest and rookie cache" }
@@ -211,6 +219,8 @@ function Uninstall-Broker {
 }
 
 # --- synchronizer ($PROFILE function) ---
+# Fetch the claudesync PS1 function template and substitute the image ref.
+# Returns the rendered function text ready to append to $PROFILE.
 function New-SyncFunction {
     param([string]$Ref)
     $tmp = [System.IO.Path]::GetTempFileName()
@@ -224,6 +234,7 @@ function New-SyncFunction {
     finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
 }
 
+# Strip the claudesync function block (bounded by $Marker) from $PROFILE.
 function Remove-ProfileBlock {
     if (-not (Test-Path $PROFILE)) { return }
     if ($DryRun) { Write-DryRun "remove claudesync block from $PROFILE"; return }
@@ -234,6 +245,7 @@ function Remove-ProfileBlock {
     Set-Content -Path $PROFILE -Value $content -NoNewline
 }
 
+# Install the claudesync function to the user's $PROFILE, replacing any prior block.
 function Install-Synchronizer {
     $ref = Resolve-Ref $ImageSync $SynchronizerVersion
     Write-Info "Installing synchronizer (image ref: $ref) ..."
@@ -257,6 +269,7 @@ function Install-Synchronizer {
     Write-Success "Synchronizer -> `$PROFILE"
 }
 
+# Remove the claudesync function block from $PROFILE.
 function Uninstall-Synchronizer {
     Write-Info "Removing synchronizer ..."
     Remove-ProfileBlock
@@ -275,6 +288,7 @@ function Remove-CompletionBlock {
 }
 
 # --- mcp wrapper (.ps1 + .cmd) ---
+# Install the MCP .ps1 + .cmd wrappers to $DataDir and configure the MCP client.
 function Install-Mcp {
     $ref = Resolve-Ref $ImageMcp $McpVersion
     Write-Info "Installing MCP wrapper (image ref: $ref) ..."
@@ -313,6 +327,7 @@ exit /b %ERRORLEVEL%
     Configure-Mcp
 }
 
+# Remove the MCP wrapper files. Leaves MCP client config entries in place.
 function Uninstall-Mcp {
     Write-Info "Removing MCP wrapper ..."
     if ($DryRun) { Write-DryRun "rm $McpWrapperPs1, $McpWrapperCmd" }
@@ -347,6 +362,7 @@ function Merge-McpServer {
     Write-Success "MCP server entry written to $FilePath"
 }
 
+# Write the MCP server entry to the selected client config (-Target or prompted).
 function Configure-Mcp {
     $t = $Target
     if (-not $t) {
@@ -378,6 +394,7 @@ function Configure-Mcp {
 $CompletionMarker = "# claudesync-setup completion"
 $IsWin = (-not (Test-Path variable:IsWindows)) -or $IsWindows
 
+
 # Ensure $DataDir is on the user PATH so the .cmd shims (claudesync-setup,
 # claudesync-mcp) resolve as commands. Windows only.
 function Ensure-OnPath {
@@ -407,6 +424,7 @@ exit /b %ERRORLEVEL%
     if ($DryRun) { Write-DryRun "write $CmdPath" } else { Set-Content -Path $CmdPath -Value $c -Encoding ASCII }
 }
 
+# Copy this setup script to $DataDir, write the .cmd shim, add $DataDir to PATH, register completion.
 function Install-Self {
     Ensure-Dir $DataDir
     if ($ScriptDir -and (Test-Path (Join-Path $ScriptDir "claudesync-setup.ps1")) -and ((Join-Path $ScriptDir "claudesync-setup.ps1") -ne $SetupDest)) {
@@ -437,6 +455,7 @@ Register-ArgumentCompleter -CommandName claudesync-setup -ScriptBlock {
     else { Add-Content -Path $PROFILE -Value $block }
 }
 
+# Persist the installed component versions and pin_digest flag to $StateFile as JSON.
 function Write-State {
     if ($DryRun) { return }
     Ensure-Dir $DataDir
