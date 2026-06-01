@@ -15,4 +15,6 @@ if (-not $psExe) { $psExe = "powershell" }
 $cookie = & $psExe -NoProfile -ExecutionPolicy Bypass -File $broker
 $cookie = ($cookie | Where-Object { $_ } | Select-Object -Last 1)
 if (-not $cookie) { _Mcp_Error "Could not read sessionKey cookie" }
-docker run --rm -i -e "CLAUDE_AI_COOKIE=$cookie" __REF__
+$proj = ((Split-Path -Leaf (Get-Location)) -replace '[^a-zA-Z0-9_-]', '-')
+if ($proj.Length -gt 10) { $proj = $proj.Substring(0, 10) }
+docker run --rm -i --name "claudesync-mcp-$proj" -e "CLAUDE_AI_COOKIE=$cookie" __REF__

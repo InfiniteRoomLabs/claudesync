@@ -8,4 +8,5 @@ _b="${XDG_DATA_HOME:-${HOME}/.local/share}/claudesync/harvest-cookie.sh"
 [ -f "${_b}" ] || _mcp_error "cookie broker missing; run claudesync-setup"
 _c="$(sh "${_b}" 2>/dev/null)" || _mcp_error "Could not read sessionKey cookie"
 [ -n "${_c}" ] || _mcp_error "Could not read sessionKey cookie"
-exec docker run --rm -i -e "CLAUDE_AI_COOKIE=${_c}" __REF__
+_proj="$(basename "$(pwd)" | sed 's/[^a-zA-Z0-9_-]/-/g' | cut -c1-10)"
+exec docker run --rm -i --name "claudesync-mcp-${_proj}" -e "CLAUDE_AI_COOKIE=${_c}" __REF__
