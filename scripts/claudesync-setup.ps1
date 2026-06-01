@@ -213,28 +213,15 @@ function Uninstall-Broker {
 # --- synchronizer ($PROFILE function) ---
 function New-SyncFunction {
     param([string]$Ref)
-    $tpl = @'
-
-# claudesync -- installed by https://github.com/InfiniteRoomLabs/claudesync
-function claudesync {
-    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-        Write-Host "claudesync: Docker is not installed." -ForegroundColor Red; return
+    $tmp = [System.IO.Path]::GetTempFileName()
+    try {
+        $imgTag = "${ImageSync}:$(if($SynchronizerVersion){$SynchronizerVersion}else{'latest'})"
+        if (-not (Get-Asset "scripts/lib/claudesync-fn.ps1" $tmp $imgTag "/opt/claudesync/host/lib/claudesync-fn.ps1")) {
+            Stop-Setup "Could not fetch function template."
+        }
+        return (Get-Content $tmp -Raw) -replace '__REF__', $Ref
     }
-    $broker = Join-Path $env:LOCALAPPDATA "claudesync\Harvest-Cookie.ps1"
-    if (-not (Test-Path $broker)) {
-        Write-Host "claudesync: cookie broker missing; run claudesync-setup" -ForegroundColor Red; return
-    }
-    $psExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
-    if (-not $psExe) { $psExe = (Get-Command powershell -ErrorAction SilentlyContinue).Source }
-    if (-not $psExe) { $psExe = "powershell" }
-    $cookie = & $psExe -NoProfile -ExecutionPolicy Bypass -File $broker
-    $cookie = ($cookie | Where-Object { $_ } | Select-Object -Last 1)
-    if (-not $cookie) { return }
-    $tty = @(); if ($Args.Count -ge 1 -and $Args[0] -eq 'tui') { $tty = @('-it') }
-    docker run --rm @tty -e "CLAUDE_AI_COOKIE=$cookie" -v "${PWD}:/data" __REF__ @Args
-}
-'@
-    return ($tpl -replace '__REF__', $Ref)
+    finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
 }
 
 function Remove-ProfileBlock {
@@ -298,27 +285,6 @@ function Install-Mcp {
     }
     Ensure-Dir $DataDir
 
-    $ps1 = @'
-#Requires -Version 5.1
-# claudesync-mcp wrapper -- resolves the cookie via the broker, runs the MCP container.
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-function _Mcp_Error { param([string]$m)
-    $j = '{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"claudesync-mcp: ' + ($m -replace '"','\"') + '"}}'
-    [Console]::Error.WriteLine($j); exit 1
-}
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { _Mcp_Error "docker not found" }
-$broker = Join-Path $env:LOCALAPPDATA "claudesync\Harvest-Cookie.ps1"
-if (-not (Test-Path $broker)) { _Mcp_Error "cookie broker missing; run claudesync-setup" }
-$psExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
-if (-not $psExe) { $psExe = (Get-Command powershell -ErrorAction SilentlyContinue).Source }
-if (-not $psExe) { $psExe = "powershell" }
-$cookie = & $psExe -NoProfile -ExecutionPolicy Bypass -File $broker
-$cookie = ($cookie | Where-Object { $_ } | Select-Object -Last 1)
-if (-not $cookie) { _Mcp_Error "Could not read sessionKey cookie" }
-docker run --rm -i -e "CLAUDE_AI_COOKIE=$cookie" __REF__
-'@
-    $ps1 = $ps1 -replace '__REF__', $ref
     $cmd = @"
 @echo off
 REM claudesync-mcp wrapper. Prefers pwsh 7+, falls back to Windows PowerShell.
@@ -331,6 +297,15 @@ exit /b %ERRORLEVEL%
 "@
     if ($DryRun) { Write-DryRun "write MCP wrapper (.ps1 + .cmd) pinned to $ref to $DataDir" }
     else {
+        $tmp = [System.IO.Path]::GetTempFileName()
+        try {
+            $imgTag = "${ImageMcp}:$(if($McpVersion){$McpVersion}else{'latest'})"
+            if (-not (Get-Asset "scripts/lib/claudesync-mcp-wrapper.ps1" $tmp $imgTag "/opt/claudesync/host/lib/claudesync-mcp-wrapper.ps1")) {
+                Stop-Setup "Could not fetch MCP wrapper template."
+            }
+            $ps1 = (Get-Content $tmp -Raw) -replace '__REF__', $ref
+        }
+        finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
         Set-Content -Path $McpWrapperPs1 -Value $ps1 -Encoding UTF8
         Set-Content -Path $McpWrapperCmd -Value $cmd -Encoding ASCII
     }

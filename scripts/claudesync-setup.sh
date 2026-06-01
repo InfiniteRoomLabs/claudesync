@@ -364,28 +364,12 @@ uninstall_broker() {
 # ---------------------------------------------------------------------------
 sync_function_body() {
     _ref="$1"
-    cat <<EOF
-
-${MARKER}
-claudesync() {
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "claudesync: docker is not installed." >&2
-    return 1
-  fi
-  local _cs_broker="${BROKER_DEST}"
-  if [ ! -f "\${_cs_broker}" ]; then
-    echo "claudesync: cookie broker missing at \${_cs_broker}; run claudesync-setup" >&2
-    return 1
-  fi
-  local _cs_cookie
-  _cs_cookie="\$(sh "\${_cs_broker}")" || return 1
-  [ -n "\${_cs_cookie}" ] || return 1
-  local _cs_tty=""
-  case "\${1:-}" in tui) _cs_tty="-it" ;; esac
-  CLAUDE_AI_COOKIE="\${_cs_cookie}" \\
-    docker run --rm \${_cs_tty} -e CLAUDE_AI_COOKIE -v "\$(pwd):/data" ${_ref} "\$@"
-}
-EOF
+    _tpl_tmp="$(mktemp)"
+    fetch_asset "scripts/lib/claudesync-fn.bash" "${_tpl_tmp}" \
+                "${IMAGE_SYNC}:${VER_SYNC:-latest}" "/opt/claudesync/host/lib/claudesync-fn.bash" \
+        || { rm -f "${_tpl_tmp}"; die "Could not fetch bash function template."; }
+    awk -v r="${_ref}" '{ gsub(/__REF__/, r); print }' "${_tpl_tmp}"
+    rm -f "${_tpl_tmp}"
 }
 
 detect_rc() {
@@ -445,27 +429,12 @@ install_synchronizer_fish() {
         info "[dry-run] write fish function (pinned to ${_ref}) to ${_file}"
         return
     fi
-    cat > "${_file}" <<EOF
-${MARKER}
-function claudesync
-    if not command -q docker
-        echo "claudesync: docker is not installed." >&2
-        return 1
-    end
-    set -l _cs_broker "${BROKER_DEST}"
-    if not test -f "\$_cs_broker"
-        echo "claudesync: cookie broker missing at \$_cs_broker; run claudesync-setup" >&2
-        return 1
-    end
-    set -l _cs_cookie (sh "\$_cs_broker"); or return 1
-    test -n "\$_cs_cookie"; or return 1
-    set -l _cs_tty
-    if test (count \$argv) -ge 1; and test "\$argv[1]" = "tui"
-        set _cs_tty -it
-    end
-    CLAUDE_AI_COOKIE="\$_cs_cookie" docker run --rm \$_cs_tty -e CLAUDE_AI_COOKIE -v (pwd)":/data" ${_ref} \$argv
-end
-EOF
+    _tpl_tmp="$(mktemp)"
+    fetch_asset "scripts/lib/claudesync-fn.fish" "${_tpl_tmp}" \
+                "${IMAGE_SYNC}:${VER_SYNC:-latest}" "/opt/claudesync/host/lib/claudesync-fn.fish" \
+        || { rm -f "${_tpl_tmp}"; die "Could not fetch fish function template."; }
+    awk -v r="${_ref}" '{ gsub(/__REF__/, r); print }' "${_tpl_tmp}" > "${_file}"
+    rm -f "${_tpl_tmp}"
     success "Synchronizer (fish) -> ${_file}"
 }
 
@@ -498,19 +467,12 @@ install_mcp() {
     if [ "${DRY_RUN}" = "1" ]; then
         info "[dry-run] write MCP wrapper (pinned to ${_ref}) to ${MCP_WRAPPER}"
     else
-        cat > "${MCP_WRAPPER}" <<EOF
-#!/bin/sh
-# claudesync-mcp wrapper -- resolves the cookie via the shared broker, runs the
-# MCP container. Installed by claudesync-setup.
-set -eu
-_mcp_error() { printf '{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"claudesync-mcp: %s"}}' "\$1" >&2; exit 1; }
-command -v docker >/dev/null 2>&1 || _mcp_error "docker not found"
-_b="${BROKER_DEST}"
-[ -f "\${_b}" ] || _mcp_error "cookie broker missing; run claudesync-setup"
-_c="\$(sh "\${_b}" 2>/dev/null)" || _mcp_error "Could not read sessionKey cookie"
-[ -n "\${_c}" ] || _mcp_error "Could not read sessionKey cookie"
-exec docker run --rm -i -e "CLAUDE_AI_COOKIE=\${_c}" ${_ref}
-EOF
+        _tpl_tmp="$(mktemp)"
+        fetch_asset "scripts/lib/claudesync-mcp-wrapper.sh" "${_tpl_tmp}" \
+                    "${IMAGE_MCP}:${VER_MCP:-latest}" "/opt/claudesync/host/lib/claudesync-mcp-wrapper.sh" \
+            || { rm -f "${_tpl_tmp}"; die "Could not fetch MCP wrapper template."; }
+        awk -v r="${_ref}" '{ gsub(/__REF__/, r); print }' "${_tpl_tmp}" > "${MCP_WRAPPER}"
+        rm -f "${_tpl_tmp}"
         chmod +x "${MCP_WRAPPER}"
     fi
     success "MCP wrapper -> ${MCP_WRAPPER}"
