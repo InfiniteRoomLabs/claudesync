@@ -14,7 +14,7 @@ import {
   writeProjectBundle,
   type ProjectConvBuilt,
 } from "./project-sync.js";
-import { safeSlug, displayName } from "../util/naming.js";
+import { safeSlug, displayName, disambiguateSlugs } from "../util/naming.js";
 import { MinPriorityQueue } from "../concurrency/priority-queue.js";
 import { WorkerPool, type PoolTask } from "../concurrency/worker-pool.js";
 import type { AdaptiveController } from "../concurrency/controller.js";
@@ -91,6 +91,8 @@ interface ProjectAccumulator {
   docs: ProjectDoc[];
   built: ProjectConvBuilt[];
   outstanding: number;
+  /** uuid -> collision-safe slug for this project's conversations. */
+  convSlugs: Map<string, string>;
 }
 
 /**
@@ -125,6 +127,14 @@ export async function runOrgSync(
     client.listProjects(orgId),
     client.listConversationsAll(orgId),
   ]);
+  // Collision-safe slugs per directory namespace (see disambiguateSlugs).
+  // Projects share `projects/<slug>`; standalone convs share
+  // `conversations/<slug>`; each project's convs share their own namespace
+  // (computed per-project in runDiscovery).
+  const projectSlugs = disambiguateSlugs(projects);
+  let standaloneSlugs = new Map<string, string>();
+  const slugFor = (m: Map<string, string>, name: string | null | undefined, uuid: string) =>
+    m.get(uuid) ?? safeSlug(name, uuid);
   emit({
     type: "org-start",
     projectCount: projects.length,
@@ -160,6 +170,7 @@ export async function runOrgSync(
     const standalone = allConversations.filter(
       (c) => !c.project_uuid && !projectConvUuids.has(c.uuid)
     );
+    standaloneSlugs = disambiguateSlugs(standalone);
     standaloneCount = standalone.length;
     for (const conv of standalone) {
       convTotal += 1;
@@ -188,7 +199,7 @@ export async function runOrgSync(
     const projectPath = resolve(
       outputRoot,
       "projects",
-      safeSlug(acc.project.name, acc.project.uuid)
+      slugFor(projectSlugs, acc.project.name, acc.project.uuid)
     );
     await writeProjectBundle(bundle, projectPath, format, preserve);
     emit({
@@ -202,7 +213,7 @@ export async function runOrgSync(
     const projectPath = resolve(
       outputRoot,
       "projects",
-      safeSlug(project.name, project.uuid)
+      slugFor(projectSlugs, project.name, project.uuid)
     );
 
     // --skip-existing: still list conversations so they aren't misclassified as
@@ -236,6 +247,7 @@ export async function runOrgSync(
       docs,
       built: [],
       outstanding: projConvs.length,
+      convSlugs: disambiguateSlugs(projConvs),
     });
 
     if (projConvs.length === 0) {
@@ -290,7 +302,7 @@ export async function runOrgSync(
     });
     await settleProjectConv(task.projectId, {
       index: task.index,
-      slug: built.slug,
+      slug: accs.get(task.projectId)?.convSlugs.get(task.conv.uuid) ?? built.slug,
       commits: built.bundle.commits,
     });
   }
@@ -299,7 +311,7 @@ export async function runOrgSync(
     const convPath = resolve(
       outputRoot,
       "conversations",
-      safeSlug(task.conv.name, task.conv.uuid)
+      slugFor(standaloneSlugs, task.conv.name, task.conv.uuid)
     );
     const result = await syncConversation(client, orgId, task.conv, convPath, {
       format,

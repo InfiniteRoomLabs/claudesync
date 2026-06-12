@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Slug collisions silently overwrote same-named conversations** (data loss).
+  `safeSlug` discarded the uuid for any non-empty name, so two conversations
+  titled the same mapped to one directory and the last sync clobbered the
+  rest -- and because they shared one `.claudesync-state.json`, `--skip-same`
+  never matched, so colliding conversations re-synced every run. `export-all`
+  now disambiguates per directory namespace (standalone convs, projects,
+  per-project convs) via `disambiguateSlugs`: any slug shared by >1 uuid gets
+  every member suffixed with its uuid head (`casual-greeting-099ff180`);
+  unique slugs stay bare, so non-colliding directories are untouched.
+  Note: the separate `projects` subcommand (`projects.ts`) still has a
+  hand-rolled slugify with the same latent bug -- not in the `export-all`
+  path, left for a follow-up.
+
 ## [0.9.0] - 2026-06-01
 
 ### Changed
