@@ -185,6 +185,30 @@ describe("runOrgSync", () => {
     ).toBe(true);
   });
 
+  it("gives same-named standalone conversations distinct, uuid-suffixed dirs", async () => {
+    // Regression: safeSlug ignored the uuid for non-empty names, so two
+    // conversations titled the same overwrote each other's directory.
+    const dupConvs: ConversationSummary[] = [
+      summary("099ff180-09ad-4ccb-8dd3-2e343de804e7", "Casual greeting"),
+      summary("b63a8aa4-1b21-4a28-9b25-bdf7a6d6402a", "Casual greeting"),
+    ];
+    const client = {
+      listProjects: async () => [],
+      listConversationsAll: async () => dupConvs,
+      getProjectDocs: async (): Promise<ProjectDoc[]> => [],
+      getProjectConversations: async () => [],
+      getConversation: async (_o: string, uuid: string) => conversation(uuid, uuid),
+    } as unknown as ClaudeSyncClient;
+
+    const result = await runOrgSync(client, "org", baseOpts(makeController()));
+    expect(result.errors).toBe(0);
+    // Both survive: neither clobbered the other. json mode writes <slug>.json.
+    expect(existsSync(join(out, "conversations", "casual-greeting-099ff180.json"))).toBe(true);
+    expect(existsSync(join(out, "conversations", "casual-greeting-b63a8aa4.json"))).toBe(true);
+    // And the bare colliding name was NOT written.
+    expect(existsSync(join(out, "conversations", "casual-greeting.json"))).toBe(false);
+  });
+
   it("filters standalone using the project conversation set, not just project_uuid", async () => {
     const { client, calls } = buildMockClient();
     await runOrgSync(client, "org", baseOpts(makeController()));
