@@ -149,3 +149,29 @@ export { slugify, safeSlug, displayName } from "./util/naming.js";
 
 // Glob helpers
 export { matchGlob, matchAnyGlob, compileGlob } from "./util/glob.js";
+
+// Claude Code (local session cache) source
+export type {
+  CcLine,
+  CcContentBlock,
+  DiscoveredSession,
+  ParsedSession,
+} from "./claude-code/parse.js";
+export {
+  discoverSessions,
+  parseSession,
+  parseLines,
+  summarize,
+} from "./claude-code/parse.js";
+export type {
+  ClaudeCodeFidelity,
+  RenderOptions,
+  RenderedSession,
+} from "./claude-code/render.js";
+export { renderSession } from "./claude-code/render.js";
+export type {
+  RunClaudeCodeSyncOptions,
+  RunClaudeCodeSyncResult,
+  ClaudeCodeProgressEvent,
+} from "./claude-code/sync.js";
+export { runClaudeCodeSync } from "./claude-code/sync.js";
