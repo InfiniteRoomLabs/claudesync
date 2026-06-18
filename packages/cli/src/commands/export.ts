@@ -1,10 +1,14 @@
 import { Command } from "commander";
 import { resolve } from "node:path";
 import {
-  syncConversation,
+  ClaudeSource,
+  FileSink,
+  parseLocationUri,
+  sync,
   safeSlug,
   displayName,
   type ExportFormat,
+  type ItemRef,
 } from "@infinite-room-labs/claudesync-core";
 import { createClient, resolveOrgId } from "../utils.js";
 
@@ -53,33 +57,51 @@ export const exportCommand = new Command("export")
     const { auth, client } = createClient();
     const orgId = await resolveOrgId(auth, options.org);
 
-    // For --skip-same we need the list-endpoint summary (cheap, no
-    // chat_messages). Always fetch it so the cursor checks are accurate.
-    const summaries = await client.listConversationsAll(orgId);
-    const summary = summaries.find((c) => c.uuid === conversationId);
-    if (!summary) {
+    // claude.ai expressed as a source surface.
+    const source = new ClaudeSource(client, orgId, {
+      authorName: options.authorName,
+      authorEmail: options.authorEmail,
+      skipArtifacts: options.skipArtifacts,
+    });
+
+    // Resolve the conversation (one cached list call inside the source) so we
+    // can derive the default output path and detect not-found before syncing.
+    let ref: ItemRef | undefined;
+    for await (const r of source.list({ conversationId })) {
+      ref = r;
+      break;
+    }
+    if (!ref) {
       console.error(`Conversation not found: ${conversationId}`);
       process.exit(1);
       return; // unreachable after process.exit, helps the type narrower
     }
 
-    const slug = safeSlug(summary.name, summary.uuid);
+    const slug = safeSlug(ref.name, ref.id);
     const outputPath = resolve(options.output ?? `./${slug}`);
 
-    const label = displayName(summary.name, summary.uuid);
-    console.log(`Syncing conversation ${label} (${summary.uuid})`);
+    // `--output ./x` -> `file:///abs/x?format=<fmt>`, dispatched through the
+    // local-filesystem sink surface. Format is a property of the sink.
+    const sinkUri = parseLocationUri(outputPath);
+    sinkUri.query.format = options.format;
+    const sink = FileSink.fromUri(sinkUri);
+
+    const label = displayName(ref.name, ref.id);
+    console.log(`Syncing conversation ${label} (${ref.id})`);
     console.log(`  Format: ${options.format}`);
     console.log(`  Output: ${outputPath}`);
 
-    const result = await syncConversation(client, orgId, summary, outputPath, {
+    const [result] = await sync(source, [sink], {
+      selector: { conversationId },
       format: options.format,
       authorName: options.authorName,
       authorEmail: options.authorEmail,
       skipSame: options.skipSame,
       skipExisting: options.skipExisting,
-      skipArtifacts: options.skipArtifacts,
       preserve: options.preserve,
     });
+
+    if (!result) return;
 
     switch (result.action) {
       case "skipped":

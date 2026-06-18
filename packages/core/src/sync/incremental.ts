@@ -1,31 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
-import { rmSync } from "node:fs";
 import type { ClaudeSyncClient } from "../client/client.js";
-import type {
-  ArtifactListResponse,
-  Conversation,
-  ConversationSummary,
-} from "../models/types.js";
-import { exportToGit, appendToGit } from "../export/git-exporter.js";
-import { diffConversation } from "./diff.js";
-import {
-  appendChangelog,
-  renderChangelogSection,
-  CHANGELOG_FILENAME,
-} from "./changelog.js";
-import {
-  readSyncState,
-  writeSyncState,
-  STATE_FILENAME,
-  type SyncState,
-} from "./state.js";
-import { buildMessageTree, findLeafMessages } from "../tree/message-tree.js";
+import type { ConversationSummary } from "../models/types.js";
+import { readSyncState, type SyncState } from "./state.js";
 import { fetchAndBuild } from "./fetch.js";
 import { displayName as toDisplayName } from "../util/naming.js";
-import { replaceWithPreserve } from "./files-mode.js";
+import { materializeConversation, type ExportFormat } from "./materialize.js";
 
-export type ExportFormat = "git" | "files" | "json";
+export type { ExportFormat };
 
 export interface SyncConversationOptions {
   format: ExportFormat;
@@ -73,8 +55,9 @@ export function isSameByListMetadata(
 
 /**
  * Orchestrates the sync of a single conversation: decides skip / full /
- * incremental, fetches data, runs the right exporter, writes the state file
- * and changelog. Returns metadata describing what happened.
+ * incremental, fetches data, then delegates persistence to
+ * `materializeConversation` (shared with the surface seam's FileSink). Returns
+ * metadata describing what happened.
  *
  * outputPath should be the conversation's directory (for files/git) or the
  * directory that will hold `<slug>.json` (for json mode).
@@ -86,9 +69,7 @@ export async function syncConversation(
   outputPath: string,
   options: SyncConversationOptions
 ): Promise<SyncConversationResult> {
-  const stateDir = options.format === "json"
-    ? path.dirname(outputPath)
-    : outputPath;
+  const stateDir = options.format === "json" ? path.dirname(outputPath) : outputPath;
 
   // Pre-compute display label so even early-return code paths can include it.
   const prelimDisplayName = toDisplayName(summary.name, summary.uuid);
@@ -134,128 +115,21 @@ export async function syncConversation(
     multiBranch: true,
   });
   const { conversation, artifacts, bundle } = built;
-  const diff = diffConversation(prevState, conversation, artifacts);
 
-  // For json mode: bundle is the full snapshot, written as a single JSON file.
-  if (options.format === "json") {
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath + ".json", JSON.stringify(bundle, null, 2), "utf-8");
-    writeStateFile(stateDir, summary, conversation, artifacts, prevState ? "incremental" : "full");
-    return {
-      action: prevState ? "incremental" : "full",
-      changelogWritten: false,
-      displayName: built.displayName,
-    };
-  }
-
-  const isFresh = !fs.existsSync(outputPath);
-
-  if (options.format === "git") {
-    if (isFresh) {
-      await exportToGit(bundle, outputPath);
-    } else {
-      await appendToGit(bundle, outputPath);
-    }
-  } else {
-    await writeFilesMode(bundle, outputPath, options.preserve ?? []);
-  }
-
-  let changelogWritten = false;
-  const section = renderChangelogSection(diff, new Date());
-  if (section) {
-    appendChangelog(outputPath, section);
-    changelogWritten = true;
-  }
-
-  if (options.format === "git") {
-    ensureGitignore(outputPath);
-  }
-
-  writeStateFile(
-    outputPath,
-    summary,
+  const res = await materializeConversation({
+    bundle,
     conversation,
     artifacts,
-    prevState ? "incremental" : "full"
-  );
+    summary,
+    prevState,
+    outputPath,
+    format: options.format,
+    preserve: options.preserve ?? [],
+  });
 
   return {
-    action: prevState ? "incremental" : "full",
-    changelogWritten,
+    action: res.action,
+    changelogWritten: res.changelogWritten,
     displayName: built.displayName,
   };
-}
-
-/**
- * Files mode: replay bundle into outputPath via the same tmp+swap pattern as
- * exportToGit, but strip .git at the end.
- *
- * Preservation: every re-sync rebuilds the directory from scratch. Files that
- * the user (or a downstream tool) added locally would be wiped without
- * explicit rescue. We always preserve `CHANGELOG.md` (appended to by the
- * sync), drop the prior `.claudesync-state.json` (rewritten by the caller),
- * and copy back anything else in the stash matching the `preserve` glob list.
- */
-async function writeFilesMode(
-  bundle: import("../export/types.js").GitBundle,
-  outputPath: string,
-  preserve: readonly string[]
-): Promise<void> {
-  await replaceWithPreserve({
-    outputPath,
-    writeFresh: async () => {
-      await exportToGit(bundle, outputPath);
-      rmSync(path.join(outputPath, ".git"), { recursive: true, force: true });
-    },
-    alwaysPreserve: [CHANGELOG_FILENAME],
-    alwaysDrop: [STATE_FILENAME],
-    preserveGlobs: preserve,
-  });
-}
-
-function ensureGitignore(repoDir: string): void {
-  const gitignorePath = path.join(repoDir, ".gitignore");
-  const line = STATE_FILENAME;
-  let contents = "";
-  if (fs.existsSync(gitignorePath)) {
-    contents = fs.readFileSync(gitignorePath, "utf-8");
-    if (contents.split(/\r?\n/).some((l) => l.trim() === line)) {
-      return;
-    }
-    if (!contents.endsWith("\n")) contents += "\n";
-  }
-  contents += `${line}\n${STATE_FILENAME}.tmp\n`;
-  fs.writeFileSync(gitignorePath, contents, "utf-8");
-}
-
-function writeStateFile(
-  dir: string,
-  summary: ConversationSummary,
-  conversation: Conversation,
-  artifacts: ArtifactListResponse,
-  action: "full" | "incremental"
-): void {
-  const nodeMap = buildMessageTree(conversation.chat_messages);
-  const leaves = findLeafMessages(nodeMap).map((m) => ({
-    uuid: m.uuid,
-    last_message_index: m.index,
-  }));
-
-  const state: SyncState = {
-    schema_version: 1,
-    conversation_uuid: conversation.uuid,
-    conversation_name: conversation.name,
-    model: conversation.model ?? null,
-    updated_at: summary.updated_at,
-    current_leaf_message_uuid: conversation.current_leaf_message_uuid ?? null,
-    leaves,
-    artifacts: artifacts.files_metadata.map((a) => ({
-      path: a.path,
-      size: a.size,
-      created_at: a.created_at,
-    })),
-    last_sync_at: new Date().toISOString(),
-    last_sync_action: action,
-  };
-  writeSyncState(dir, state);
 }

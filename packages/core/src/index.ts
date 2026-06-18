@@ -149,3 +149,30 @@ export { slugify, safeSlug, displayName } from "./util/naming.js";
 
 // Glob helpers
 export { matchGlob, matchAnyGlob, compileGlob } from "./util/glob.js";
+
+// Surface seam (PRD 001 Phase 0): addressable source/sink surfaces + URI grammar
+export type {
+  ParsedUri,
+  SurfaceCaps,
+  Location,
+  ItemKind,
+  ItemRef,
+  CanonicalItem,
+  Selector,
+  ApplyOpts,
+  SinkState,
+  ApplyResult,
+  SourceSurface,
+  SinkSurface,
+  ClaudeSourceOptions,
+  FileSinkLayout,
+  FileSinkOptions,
+  SyncOptions,
+} from "./surface/index.js";
+export {
+  parseLocationUri,
+  fileUri,
+  ClaudeSource,
+  FileSink,
+  sync,
+} from "./surface/index.js";
