@@ -47,12 +47,18 @@ through the sink. Zero behavior change is proven by a parity test
 migrate `export-all`'s parallel scheduler and `projects` to construct surfaces
 explicitly -- they already share `materializeConversation`.
 
-**Already shipped (Phase 1, separate branch):** the `claudesync claude-code`
-subcommand (branch `feat/claude-code-source`) is **Phase 1 built pragmatically
-ahead of Phase 0** -- it reads `~/.claude/projects/**/*.jsonl` and writes the
-canonical tree, but as a standalone command rather than behind the `cc://` source
-surface. Folding it behind the seam (which now exists) is the next integration
-this PRD enables.
+**Phase 1 -- DONE** (branch `feat/surface-seam-phase1`): the Claude Code session
+reader (`packages/core/src/claude-code/`, originally the standalone `claudesync
+claude-code` subcommand) is now also exposed as the **`cc://` source surface**
+(`surface/cc-source.ts`). The seam gained a pre-rendered-tree path: a source can
+hand the sink a flat `relPath -> content` tree (the PRD's `CanonicalTree`) plus
+state, written verbatim via `sync/tree.ts`'s `writeTreeWithPreserve`. The layout
+planning (`planSessions`) and session->tree rendering (`buildSessionTree`) live
+in `claude-code/build.ts`, shared by both the `claude-code` subcommand and
+`CcSource`, so `cc:// -> FileSink` is **byte-identical** to the subcommand --
+proven by `surface/__tests__/cc-seam.test.ts` (synthetic, both fidelities +
+skip-same) and a real-data parity run. The `claude-code` / `export` / `export-all`
+commands are behavior-unchanged.
 
 ---
 
@@ -329,7 +335,7 @@ durable extensions are **Class D** (ride Phase 1's seam) and **ACP** (FR-6).
 | Phase | Scope | Gate |
 |---|---|---|
 | **0** | The seam. Extract `Location`/`SourceSurface`/`SinkSurface`; re-express claude.ai as `claude://`, local FS as `file://`; route `--output`/`--format`/`--preserve` through it. **Zero behavior change.** | **DONE.** Byte-identical output proven by `surface/__tests__/seam.test.ts`; full suite green. `export` dispatches through the sink. |
-| **1** | `cc://` Claude Code session reader -> `CanonicalTree` -> existing sink. Validates the source abstraction against a very different source, no network. **Shape the canonical message type to ACP during this phase (nearly free).** | Verify the real JSONL schema first. (Reader logic already exists in the `claude-code` subcommand -- refactor it behind `cc://`.) |
+| **1** | `cc://` Claude Code session reader -> `CanonicalTree` -> existing sink. Validates the source abstraction against a very different source, no network. **Shape the canonical message type to ACP during this phase (nearly free).** | **DONE.** `CcSource` (`surface/cc-source.ts`) feeds a pre-rendered tree through the seam; byte-identical to the `claude-code` subcommand (shared `claude-code/build.ts`), proven by `cc-seam.test.ts` + a real-data run. |
 | **1.5** | Additional Class D sources as needed: `aider://` + `cursor://` first, then `opencode://`/`gemini-cli://`; `import://chatgpt` (clean export). Each an independent `SourceSurface`. | Verify each tool's on-disk format on the install first -- they drift. |
 | **2** | rsync grammar on the local sink: trailing-slash, include/exclude/filter (first-match), `--delete` (per-sink), `--dry-run`. No remote transport yet. | Useful local-only. |
 | **3** | Real transports: `s3://` first (Garage; request/response simpler than rsync wire), then `rsync://` / `user@host:path`. Transport-only concerns (`--bwlimit`, `--partial`, compression) land here and nowhere else. | -- |
@@ -395,8 +401,9 @@ into `sync`.
 
 - Phase 0: 100% byte-identical output vs current `export`/`export-all` on a
   fixture corpus; full test suite green; no new public CLI flags.
-- Phase 1: `cc://` produces the same layout the `claude-code` subcommand does, now
-  behind the seam; `export`/`export-all`/`claude-code` aliases unchanged.
+- Phase 1: **MET.** `cc://` produces the same layout the `claude-code` subcommand
+  does, now behind the seam (byte-identical parity test + real-data run);
+  `export`/`export-all`/`claude-code` aliases unchanged.
 - Phase 3: a single `sync` invocation fan-outs claude.ai -> local git + Garage S3
   with one source read.
 
@@ -404,8 +411,9 @@ into `sync`.
 
 - Design doc: `claudesync-remote-surface-design.md` (claude.ai conversation
   `4119ad38-21cc-4cdd-897f-8a29e27a55e7`).
-- Already-built Phase 1 reader: `packages/core/src/claude-code/` + CLI
-  `packages/cli/src/commands/claude-code.ts` (branch `feat/claude-code-source`).
+- Phase 1 reader + `cc://` surface: `packages/core/src/claude-code/` (incl.
+  shared `build.ts`), `surface/cc-source.ts`, `sync/tree.ts`, CLI
+  `packages/cli/src/commands/claude-code.ts` (branch `feat/surface-seam-phase1`).
 - Keystone code: `export/bundle-builder.ts`, `sync/diff.ts`,
   `sync/files-mode.ts` (`replaceWithPreserve`), `util/glob.ts`,
   `export/git-exporter.ts`.

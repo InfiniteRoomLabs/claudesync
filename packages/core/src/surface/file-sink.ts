@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readSyncState } from "../sync/state.js";
+import { writeTreeWithPreserve } from "../sync/tree.js";
 import { materializeConversation, type ExportFormat } from "../sync/materialize.js";
 import { safeSlug, displayName as toDisplayName } from "../util/naming.js";
 import type {
@@ -60,6 +61,9 @@ export class FileSink implements SinkSurface {
   }
 
   pathFor(ref: ItemRef): string {
+    // A source-computed relpath (e.g. cc://'s `claude-code/<proj>/<session>`)
+    // wins over the sink's own slugging.
+    if (ref.relPath) return path.join(this.basePath, ref.relPath);
     return this.layout === "direct"
       ? this.basePath
       : path.join(this.basePath, safeSlug(ref.name, ref.id));
@@ -97,6 +101,21 @@ export class FileSink implements SinkSurface {
     opts: ApplyOpts,
     prevState: SinkState | null
   ): Promise<ApplyResult> {
+    // Pre-rendered tree (cc:// and other Class D sources): write verbatim.
+    if (item.tree) {
+      await writeTreeWithPreserve(this.pathFor(item.ref), item.tree, opts.preserve ?? []);
+      return {
+        ref: item.ref,
+        action: "full",
+        changelogWritten: false,
+        displayName: toDisplayName(item.ref.name, item.ref.id),
+      };
+    }
+
+    if (!item.bundle || !item.conversation || !item.artifacts || !item.summary) {
+      throw new Error("FileSink.write: CanonicalItem must carry either a bundle or a tree");
+    }
+
     const res = await materializeConversation({
       bundle: item.bundle,
       conversation: item.conversation,

@@ -14,6 +14,7 @@ export type {
 } from "./types.js";
 export { parseLocationUri, fileUri } from "./uri.js";
 export { ClaudeSource, type ClaudeSourceOptions } from "./claude-source.js";
+export { CcSource, type CcSourceOptions } from "./cc-source.js";
 export {
   FileSink,
   type FileSinkLayout,

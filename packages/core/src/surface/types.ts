@@ -19,6 +19,7 @@ import type {
   ConversationSummary,
 } from "../models/types.js";
 import type { SyncState } from "../sync/state.js";
+import type { TreePayload } from "../sync/tree.js";
 import type { ExportFormat } from "../sync/materialize.js";
 
 /** A parsed `scheme://[user@][host][:port]/path[?query]` endpoint. */
@@ -54,24 +55,39 @@ export interface ItemRef {
   /** From the list endpoint -- lets the orchestrator do --skip-same without a read. */
   updatedAt?: string;
   currentLeafUuid?: string | null;
+  /**
+   * Source-suggested relative output path (already slugified/disambiguated).
+   * A nested {@link SinkSurface} writes the item at `<base>/<relPath>` when set.
+   * Used by multi-item local sources like `cc://` whose nesting is computed
+   * across the whole listing (`claude-code/<project>/<session>`).
+   */
+  relPath?: string;
 }
 
 /**
  * Neutral interchange produced by a source and consumed by a sink.
  *
- * The PRD sketches this as a flat `Map<path, content>`; in this codebase the
- * real wire format is the `GitBundle` (it preserves commit/branch structure
- * that the flat map would lose for `format=git`). `bundle` is that tree. The
- * `conversation`/`artifacts`/`summary` fields carry what an *incremental* sink
- * needs (diff -> changelog, state file). A non-claude source (e.g. `cc://` in
- * Phase 1) synthesizes a `Conversation`/`ConversationSummary` to fill these.
+ * Two shapes, distinguished by which field is set:
+ *
+ *  - **bundle** (claude.ai): the real wire format is the `GitBundle` (it
+ *    preserves commit/branch structure a flat map would lose for `format=git`).
+ *    `conversation`/`artifacts`/`summary` carry what an *incremental* sink needs
+ *    (diff -> changelog, state file). The `materializeConversation` sink path.
+ *  - **tree** (`cc://` and other Class D local sources, Phase 1): the source
+ *    already rendered a flat `relPath -> content` tree (the PRD's
+ *    `CanonicalTree`). The sink writes it verbatim via `writeTreeWithPreserve`.
+ *    Bundle-only formats (`git`/`json`) do not apply to pre-rendered trees.
+ *
+ * Exactly one of `bundle` / `tree` is present.
  */
 export interface CanonicalItem {
   ref: ItemRef;
-  bundle: GitBundle;
-  conversation: Conversation;
-  artifacts: ArtifactListResponse;
-  summary: ConversationSummary;
+  bundle?: GitBundle;
+  conversation?: Conversation;
+  artifacts?: ArtifactListResponse;
+  summary?: ConversationSummary;
+  /** Pre-rendered tree + state (mutually exclusive with `bundle`). */
+  tree?: TreePayload;
 }
 
 /** What to select from a source. */

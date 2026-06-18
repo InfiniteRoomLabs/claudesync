@@ -165,6 +165,7 @@ export type {
   SourceSurface,
   SinkSurface,
   ClaudeSourceOptions,
+  CcSourceOptions,
   FileSinkLayout,
   FileSinkOptions,
   SyncOptions,
@@ -173,6 +174,38 @@ export {
   parseLocationUri,
   fileUri,
   ClaudeSource,
+  CcSource,
   FileSink,
   sync,
 } from "./surface/index.js";
+
+// Claude Code (local session cache) source -- the `cc://` reader (PRD 001 Phase 1)
+export type {
+  CcLine,
+  CcContentBlock,
+  DiscoveredSession,
+  ParsedSession,
+} from "./claude-code/parse.js";
+export {
+  discoverSessions,
+  parseSession,
+  parseLines,
+  summarize,
+} from "./claude-code/parse.js";
+export type {
+  ClaudeCodeFidelity,
+  RenderOptions,
+  RenderedSession,
+} from "./claude-code/render.js";
+export { renderSession } from "./claude-code/render.js";
+export type {
+  PlannedSession,
+  BuildSessionTreeOptions,
+} from "./claude-code/build.js";
+export { planSessions, buildSessionTree } from "./claude-code/build.js";
+export type {
+  RunClaudeCodeSyncOptions,
+  RunClaudeCodeSyncResult,
+  ClaudeCodeProgressEvent,
+} from "./claude-code/sync.js";
+export { runClaudeCodeSync } from "./claude-code/sync.js";
