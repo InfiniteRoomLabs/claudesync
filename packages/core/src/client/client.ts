@@ -41,6 +41,18 @@ export interface ClientOptions {
 /** Expected path prefix for wiggle artifact files */
 const ARTIFACT_PATH_PREFIX = "/mnt/user-data/";
 
+/** Content types that are textual despite not starting with `text/`. */
+const TEXT_APP_CONTENT_TYPE =
+  /^application\/(json|xml|javascript|x-ndjson|x-yaml|yaml)\b|^application\/[\w.+-]+\+(json|xml)\b/;
+/** Unambiguously binary content types. `octet-stream` is intentionally excluded
+ *  -- the wiggle endpoint serves text files with it, so it falls through to the
+ *  extension / strict-UTF-8 checks. */
+const BINARY_CONTENT_TYPE =
+  /^(image|audio|video)\/|^application\/(pdf|zip|gzip|x-tar|x-7z-compressed|x-bzip2|wasm)\b/;
+/** File extensions treated as UTF-8 text when the content type is ambiguous. */
+const TEXT_FILE_EXTENSION =
+  /\.(md|markdown|txt|json|jsonl|ndjson|csv|tsv|xml|ya?ml|toml|ini|cfg|conf|html?|css|scss|js|mjs|cjs|jsx|ts|tsx|py|rb|go|rs|java|kt|kts|c|h|cc|cpp|hpp|cs|php|swift|sh|bash|zsh|fish|sql|svg|patch|diff|log)$/i;
+
 export class ClaudeSyncClient {
   private readonly limiter: RequestLimiter;
 
@@ -220,6 +232,14 @@ export class ClaudeSyncClient {
    * Download an artifact file from the wiggle filesystem.
    * Returns string for text content, Uint8Array for binary content.
    *
+   * The wiggle `download-file` endpoint serves text files (e.g. `.md`, `.json`)
+   * with `application/octet-stream`, so a content-type prefix check alone
+   * mislabels UTF-8 text as binary. We decide text vs binary by: an explicitly
+   * textual content-type, OR a known text file extension, OR (for ambiguous
+   * types like octet-stream) a successful strict UTF-8 decode. Only genuinely
+   * binary content (images, archives, or bytes that fail strict UTF-8) is
+   * returned as a Uint8Array.
+   *
    * Security: validates that the path matches the expected artifact path prefix
    * to prevent path traversal attacks.
    */
@@ -241,12 +261,30 @@ export class ClaudeSyncClient {
       )
     );
 
-    const contentType =
-      response.headers.get("content-type") ?? "text/plain";
-    if (contentType.startsWith("text/")) {
-      return response.text();
+    const contentType = (
+      response.headers.get("content-type") ?? "text/plain"
+    ).toLowerCase();
+    const bytes = new Uint8Array(await response.arrayBuffer());
+
+    // 1) Explicitly textual content type.
+    if (contentType.startsWith("text/") || TEXT_APP_CONTENT_TYPE.test(contentType)) {
+      return new TextDecoder("utf-8").decode(bytes);
     }
-    return new Uint8Array(await response.arrayBuffer());
+    // 2) Explicitly binary media (image/audio/video/pdf/archive) stays bytes.
+    if (BINARY_CONTENT_TYPE.test(contentType)) {
+      return bytes;
+    }
+    // 3) Ambiguous (e.g. application/octet-stream, which the wiggle endpoint
+    //    serves even for markdown): trust a text file extension, else attempt a
+    //    strict UTF-8 decode and only keep bytes when the content is truly binary.
+    if (TEXT_FILE_EXTENSION.test(path)) {
+      return new TextDecoder("utf-8").decode(bytes);
+    }
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      return bytes;
+    }
   }
 
   /**

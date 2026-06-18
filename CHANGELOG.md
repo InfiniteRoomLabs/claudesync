@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-06-17
+
+### Fixed
+- **`downloadArtifact` mislabeled text artifacts as binary.** The wiggle
+  `download-file` endpoint serves text files (e.g. `.md`, `.json`) with
+  `application/octet-stream`, so the content-type prefix check returned a
+  `Uint8Array` and the MCP server's `download_artifact` rendered valid UTF-8
+  markdown as `[Binary content: N bytes]` -- making `.md`/`.json` artifacts
+  unreadable through the SDK and MCP. `downloadArtifact` now decides text vs
+  binary by an explicit text content-type, OR a known text file extension, OR a
+  successful strict UTF-8 decode; only genuinely binary content (images,
+  archives, non-UTF-8 bytes) is returned as a `Uint8Array`.
+
 ## [0.9.1] - 2026-06-12
 
 ### Fixed

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClaudeSyncClient } from "../client.js";
 import type { AuthProvider } from "../../auth/types.js";
 
@@ -55,5 +55,50 @@ describe("ClaudeSyncClient", () => {
     const client = new ClaudeSyncClient(createMockAuth());
     expect(typeof client.listArtifacts).toBe("function");
     expect(typeof client.downloadArtifact).toBe("function");
+  });
+});
+
+describe("downloadArtifact text/binary detection", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function mockFetch(contentType: string, body: BodyInit): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () => new Response(body, { headers: { "content-type": contentType } })
+      )
+    );
+  }
+  const client = () =>
+    new ClaudeSyncClient(createMockAuth(), { rateLimitDelayMs: 0 });
+  const artifact = (name: string) => `/mnt/user-data/outputs/${name}`;
+
+  it("treats octet-stream .md (wiggle's content type for text) as text", async () => {
+    // Regression: the wiggle download endpoint serves markdown as
+    // application/octet-stream; a content-type prefix check alone returned bytes.
+    mockFetch("application/octet-stream", "# Design\n\nbody");
+    const r = await client().downloadArtifact("org", "conv", artifact("skill-sync-design.md"));
+    expect(typeof r).toBe("string");
+    expect(r).toContain("# Design");
+  });
+
+  it("treats text/* as text", async () => {
+    mockFetch("text/markdown", "hello");
+    expect(await client().downloadArtifact("org", "conv", artifact("x.md"))).toBe("hello");
+  });
+
+  it("treats application/json as text", async () => {
+    mockFetch("application/json", '{"a":1}');
+    expect(typeof (await client().downloadArtifact("org", "conv", artifact("d.json")))).toBe("string");
+  });
+
+  it("keeps real binary (image/png) as bytes", async () => {
+    mockFetch("image/png", new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe]));
+    expect(await client().downloadArtifact("org", "conv", artifact("pic.png"))).toBeInstanceOf(Uint8Array);
+  });
+
+  it("keeps non-UTF-8 octet-stream with unknown extension as bytes", async () => {
+    mockFetch("application/octet-stream", new Uint8Array([0xff, 0xfe, 0xfd, 0x00]));
+    expect(await client().downloadArtifact("org", "conv", artifact("blob.bin"))).toBeInstanceOf(Uint8Array);
   });
 });
