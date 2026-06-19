@@ -169,6 +169,16 @@ export type {
   FileSinkLayout,
   FileSinkOptions,
   SyncOptions,
+  DatastoreAdapter,
+  DatastoreSourceOptions,
+  DatastoreFidelity,
+  NormalizedBlock,
+  NormalizedTurn,
+  NormalizedSession,
+  AdapterListItem,
+  AiderSourceOptions,
+  GeminiCliSourceOptions,
+  OpencodeSourceOptions,
 } from "./surface/index.js";
 export {
   parseLocationUri,
@@ -177,6 +187,11 @@ export {
   CcSource,
   FileSink,
   sync,
+  DatastoreSource,
+  renderNormalized,
+  AiderSource,
+  GeminiCliSource,
+  OpencodeSource,
 } from "./surface/index.js";
 
 // Claude Code (local session cache) source -- the `cc://` reader (PRD 001 Phase 1)

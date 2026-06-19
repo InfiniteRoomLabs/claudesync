@@ -60,6 +60,21 @@ proven by `surface/__tests__/cc-seam.test.ts` (synthetic, both fidelities +
 skip-same) and a real-data parity run. The `claude-code` / `export` / `export-all`
 commands are behavior-unchanged.
 
+**Phase 1.5 -- DONE** (branch `feat/surface-seam-phase1.5`): three more Class-D
+sources behind the seam -- `aider://`, `gemini-cli://`, `opencode://`. A shared
+`surface/datastore.ts` (a normalized turn model + renderer + generic
+`DatastoreSource`) reduces each provider to a thin adapter (`<provider>/adapter.ts`):
+the format -> normalized session, nothing else. Output is the same greppable tree
+as `cc://` (conversation.md + README.md + tool-outputs/). Verification followed the
+ground truth on this machine (not the PRD's original ordering): `opencode://` (a
+SQLite store -- `session`/`message`/`part` tables, copied-and-checkpointed before
+read) and `gemini-cli://` (JSONL) were validated against **real local data** (59
+real opencode sessions, 15 tool-output files); `aider://` was built against the
+documented `.aider.chat.history.md` format with a synthetic fixture (no aider data
+on this machine -- unverified). `cursor://` (blind SQLite) and `import://chatgpt`
+(needs an export) were deliberately deferred. Each source has a hermetic
+round-trip test; full suite green.
+
 ---
 
 ## Problem / Motivation
@@ -336,7 +351,7 @@ durable extensions are **Class D** (ride Phase 1's seam) and **ACP** (FR-6).
 |---|---|---|
 | **0** | The seam. Extract `Location`/`SourceSurface`/`SinkSurface`; re-express claude.ai as `claude://`, local FS as `file://`; route `--output`/`--format`/`--preserve` through it. **Zero behavior change.** | **DONE.** Byte-identical output proven by `surface/__tests__/seam.test.ts`; full suite green. `export` dispatches through the sink. |
 | **1** | `cc://` Claude Code session reader -> `CanonicalTree` -> existing sink. Validates the source abstraction against a very different source, no network. **Shape the canonical message type to ACP during this phase (nearly free).** | **DONE.** `CcSource` (`surface/cc-source.ts`) feeds a pre-rendered tree through the seam; byte-identical to the `claude-code` subcommand (shared `claude-code/build.ts`), proven by `cc-seam.test.ts` + a real-data run. |
-| **1.5** | Additional Class D sources as needed: `aider://` + `cursor://` first, then `opencode://`/`gemini-cli://`; `import://chatgpt` (clean export). Each an independent `SourceSurface`. | Verify each tool's on-disk format on the install first -- they drift. |
+| **1.5** | Additional Class D sources as needed: `aider://` + `cursor://` first, then `opencode://`/`gemini-cli://`; `import://chatgpt` (clean export). Each an independent `SourceSurface`. | **DONE (partial).** `aider://`, `gemini-cli://`, `opencode://` shipped via a shared `surface/datastore.ts` (normalized model + generic `DatastoreSource`) + thin per-provider adapters; opencode/gemini verified on real local data, aider against docs. `cursor://` (blind SQLite) + `import://chatgpt` (no export) deferred. |
 | **2** | rsync grammar on the local sink: trailing-slash, include/exclude/filter (first-match), `--delete` (per-sink), `--dry-run`. No remote transport yet. | Useful local-only. |
 | **3** | Real transports: `s3://` first (Garage; request/response simpler than rsync wire), then `rsync://` / `user@host:path`. Transport-only concerns (`--bwlimit`, `--partial`, compression) land here and nowhere else. | -- |
 | **4** | Live-capture mode (Class E), optional, separate runtime. `acp://` first, then `ollama://`. | Pays off only once the Phase-1 canonical model is ACP-aligned. |
