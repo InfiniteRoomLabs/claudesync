@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Tests relocated from co-located `src/**/__tests__/` to a per-package
+  `test/` directory** (`packages/core/test/`, mirroring the source tree). Vitest
+  `include` globs and the `tsconfig` `exclude` updated to match; no test behavior
+  changed (27 files, 200 tests still green).
+- **Added the `@core/*` -> `src/*` path alias** for test imports (vitest
+  `resolve.alias` + `tsconfig` `paths`), replacing deep `../../src/...` relative
+  paths. Cross-package imports continue to use the workspace package name.
+- **Committed curated IntelliJ project config** (`.idea/claudesync.iml`,
+  `modules.xml`, `misc.xml`, `vcs.xml`) so source/test roots auto-apply on clone;
+  `.gitignore` now tracks only those files and ignores the rest of `.idea/`.
+
 ## [0.9.2] - 2026-06-17
 
 ### Fixed

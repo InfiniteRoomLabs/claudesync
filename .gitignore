@@ -26,7 +26,12 @@ dist/
 .env.local
 
 # IDE
-.idea/
+# Track only shareable IntelliJ project config (roots, modules); ignore the rest.
+.idea/*
+!.idea/claudesync.iml
+!.idea/modules.xml
+!.idea/misc.xml
+!.idea/vcs.xml
 .vscode/
 *.swp
 *.swo
