@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- **Added a Related Ideas pointer in `CLAUDE.md`** to IRL ideas-repo idea 099 (atomic, auditable, idempotent, transactional core actions) -- an agent-facing roadmap breadcrumb; no code change.
+
 ### Changed
 - **Tests relocated from co-located `src/**/__tests__/` to a per-package
   `test/` directory** (`packages/core/test/`, mirroring the source tree). Vitest
