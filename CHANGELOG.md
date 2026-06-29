@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Documentation
+- **Full TSDoc coverage across the core SDK** (`packages/core/src`, 51 files).
+  Every declaration and member -- exported and internal -- now carries a TSDoc
+  comment (no `{type}` annotations, per-member docs, `{@link}` cross-references),
+  converting the JetBrains-generated JSDoc and filling all gaps. Docs only; no
+  code, type, or behavior change. The convention is now mandated in `CLAUDE.md`.
+- **Added two design specs under `docs/superpowers/specs/`**: write-back sync
+  (push local project knowledge to claude.ai, with 3-way conflict detection and a
+  per-level audit journal) and atomic/auditable/idempotent transactional core
+  actions (idea 099, the foundational reliability layer the former builds on).
+  Design only; not yet implemented.
 - **Added a Related Ideas pointer in `CLAUDE.md`** to IRL ideas-repo idea 099 (atomic, auditable, idempotent, transactional core actions) -- an agent-facing roadmap breadcrumb; no code change.
 
 ### Changed

@@ -1,6 +1,10 @@
+/** A queued item with the metadata needed to order it stably. */
 interface Entry<T> {
+  /** The caller's payload. */
   item: T;
+  /** Lower values are popped first. */
   priority: number;
+  /** Monotonic insertion index; breaks priority ties in FIFO order. */
   seq: number;
 }
 
@@ -15,16 +19,28 @@ interface Entry<T> {
  * an arbitrary eligibility predicate anyway).
  */
 export class MinPriorityQueue<T> {
+  /** Backing array, scanned linearly on each {@link pop}. */
   private entries: Entry<T>[] = [];
+  /** Next insertion sequence number; assigned on push to break priority ties. */
   private seqCounter = 0;
 
+  /**
+   * Enqueue an item.
+   *
+   * @param item - Payload to store.
+   * @param priority - Ordering key; lower values are popped first.
+   */
   push(item: T, priority: number): void {
     this.entries.push({ item, priority, seq: this.seqCounter++ });
   }
 
   /**
    * Remove and return the highest-priority item satisfying `isEligible`.
-   * Returns undefined when the queue is empty or nothing eligible remains.
+   *
+   * @param isEligible - Optional predicate; ineligible items are skipped but
+   * left in the queue (e.g. work gated by a per-project concurrency cap).
+   * @returns The selected item, or undefined when the queue is empty or nothing
+   * eligible remains.
    */
   pop(isEligible?: (item: T) => boolean): T | undefined {
     let bestIdx = -1;
@@ -46,6 +62,7 @@ export class MinPriorityQueue<T> {
     return best!.item;
   }
 
+  /** Number of items currently queued, including any that are ineligible. */
   get size(): number {
     return this.entries.length;
   }

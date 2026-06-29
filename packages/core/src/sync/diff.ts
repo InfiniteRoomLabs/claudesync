@@ -10,6 +10,10 @@ import {
 } from "../tree/message-tree.js";
 import type { SyncState } from "./state.js";
 
+/**
+ * Per-branch result of diffing a fetched message tree against prior sync state.
+ * One {@link BranchDiff} is produced for every current leaf in the tree.
+ */
 export interface BranchDiff {
   /** Leaf uuid identifying the branch. */
   leafUuid: string;
@@ -27,34 +31,67 @@ export interface BranchDiff {
   messages: ChatMessage[];
 }
 
+/**
+ * Artifact-level changes between the prior state and the current artifact list,
+ * bucketed into added/changed/removed. Each entry carries enough metadata for
+ * the changelog renderer to describe the change. {@link ArtifactDiff.changed}
+ * additionally carries the previous size/timestamp for before/after reporting.
+ */
 export interface ArtifactDiff {
+  /** Artifacts present now but absent from prior state. */
   added: { path: string; size: number; created_at: string }[];
+  /** Artifacts whose size or created_at differs from prior state. */
   changed: { path: string; size: number; created_at: string; prev_size: number; prev_created_at: string }[];
+  /** Artifacts present in prior state but absent now. */
   removed: { path: string; size: number; created_at: string }[];
 }
 
+/**
+ * Conversation-level metadata changes. Fields are present only when the
+ * corresponding attribute actually changed since the last sync.
+ */
 export interface MetadataDiff {
+  /** Set when the conversation title changed; carries old and new names. */
   renamed?: { from: string; to: string };
+  /** Set when the model changed; either side may be null when unknown. */
   modelChanged?: { from: string | null; to: string | null };
 }
 
+/**
+ * Complete diff of one conversation against its prior {@link SyncState},
+ * consumed by the changelog renderer and the export orchestrators to decide
+ * what (if anything) to write.
+ */
 export interface ConversationDiff {
   /** True if there is no prior state (first sync of this conversation). */
   isInitial: boolean;
   /** True if state exists and nothing changed (caller may skip/log only). */
   isUnchanged: boolean;
+  /** One entry per current branch leaf, main first then newest leaf first. */
   branches: BranchDiff[];
+  /** Added/changed/removed artifacts. */
   artifacts: ArtifactDiff;
+  /** Rename and model-change metadata, if any. */
   metadata: MetadataDiff;
 }
 
 /**
  * Diffs a freshly fetched conversation (with full message tree from
- * ?tree=True) and its current artifact list against a previously stored
- * SyncState.
+ * `?tree=True`) and its current artifact list against a previously stored
+ * {@link SyncState}.
  *
- * If prevState is undefined the result describes an "initial" sync: every
- * branch is new, every artifact is added.
+ * Branch handling avoids spurious "new branch" noise as the main branch grows:
+ * for each current leaf it walks root->leaf to find the deepest ancestor that
+ * was a leaf in the prior state. If one is found the branch is an extension of
+ * that earlier branch (same branch, new messages); otherwise it is genuinely
+ * new. Artifacts are matched by path; metadata covers rename and model change.
+ *
+ * @param prevState - State from the last sync, or undefined for the first sync.
+ * When undefined the result is "initial": every branch is new and every
+ * artifact is added.
+ * @param conversation - Conversation fetched with the full message tree.
+ * @param artifacts - Current artifact list (wiggle filesystem metadata).
+ * @returns The computed {@link ConversationDiff}.
  */
 export function diffConversation(
   prevState: SyncState | undefined,

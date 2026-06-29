@@ -27,35 +27,63 @@ import type {
   NormalizedTurn,
 } from "../surface/datastore.js";
 
+/** Default opencode SQLite store path: `~/.local/share/opencode/opencode.db`. */
 export function defaultOpencodeDb(): string {
   return path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
 }
 
+/** One joined `session` + `project` row (see {@link sessionRows}). */
 interface SessionRow {
+  /** Session id (`ses_...`). */
   id: string;
+  /** URL-safe slug; used as a title fallback. */
   slug: string | null;
+  /** Human title, or null. */
   title: string | null;
+  /** Model column: a JSON blob decoded by {@link modelId}. */
   model: string | null;
+  /** Creation time, epoch milliseconds. */
   time_created: number | null;
+  /** Last-update time, epoch milliseconds. */
   time_updated: number | null;
+  /** The project's repo path (`project.worktree`); the session's project. */
   worktree: string | null;
 }
+/** One `message` row; `data` is a JSON blob carrying at least `{ role }`. */
 interface MessageRow {
+  /** Message id (`msg_...`). */
   id: string;
+  /** JSON message payload, or null. */
   data: string | null;
+  /** Creation time, epoch milliseconds. */
   time_created: number | null;
 }
+/** One `part` row; `data` is a JSON blob whose `type` selects the block kind. */
 interface PartRow {
+  /** Part id (`prt_...`). */
   id: string;
+  /** JSON part payload (text/reasoning/tool/...), or null. */
   data: string | null;
+  /** Creation time, epoch milliseconds. */
   time_created: number | null;
 }
 
+/**
+ * {@link DatastoreAdapter} for opencode's single SQLite store. Conversations live
+ * across `project`/`session`/`message`/`part` tables; each read snapshots the
+ * (possibly WAL-live) DB to a temp copy first via {@link OpencodeAdapter.withDb}.
+ * See {@link AdapterListItem}, {@link NormalizedSession}.
+ */
 export class OpencodeAdapter implements DatastoreAdapter {
+  /** URI scheme this adapter answers for. */
   readonly scheme = "opencode";
 
+  /**
+   * @param dbPath - Path to `opencode.db`. Defaults to {@link defaultOpencodeDb}.
+   */
   constructor(private readonly dbPath: string = defaultOpencodeDb()) {}
 
+  /** Enumerate sessions as cheap list items (one query, no per-session part scan). */
   list(): AdapterListItem[] {
     return this.withDb((db) =>
       sessionRows(db).map((s) => ({
@@ -68,6 +96,15 @@ export class OpencodeAdapter implements DatastoreAdapter {
     );
   }
 
+  /**
+   * Load one session and materialize its turns: messages ordered by time, each
+   * with its parts projected to {@link NormalizedBlock}s by {@link partBlocks}.
+   * Messages that yield no blocks are dropped.
+   *
+   * @param id - Session id from {@link list}.
+   * @returns The fully parsed session.
+   * @throws If no session with `id` exists.
+   */
   read(id: string): NormalizedSession {
     return this.withDb((db) => {
       const s = sessionRows(db).find((r) => r.id === id);
@@ -109,7 +146,17 @@ export class OpencodeAdapter implements DatastoreAdapter {
     });
   }
 
-  /** Snapshot the (possibly live) DB to a temp copy, checkpoint, query, clean up. */
+  /**
+   * Run `fn` against a safe handle to the store. The live DB is copied (with any
+   * `-wal`/`-shm` sidecars) to a temp file that is WAL-checkpointed before reading,
+   * so a concurrently-running opencode is never touched; the temp dir is always
+   * removed afterward. A missing store yields an empty in-memory DB so callers
+   * behave like an empty source.
+   *
+   * @param fn - Receives the opened database; its return value is passed through.
+   * @returns Whatever `fn` returns.
+   * @typeParam T - The query result type.
+   */
   private withDb<T>(fn: (db: Database.Database) => T): T {
     if (!fs.existsSync(this.dbPath)) {
       // No store -> behave like an empty source.
@@ -135,6 +182,7 @@ export class OpencodeAdapter implements DatastoreAdapter {
   }
 }
 
+/** Query all sessions joined to their project's worktree path. */
 function sessionRows(db: Database.Database): SessionRow[] {
   return query<SessionRow>(
     db,
@@ -145,6 +193,16 @@ function sessionRows(db: Database.Database): SessionRow[] {
   );
 }
 
+/**
+ * Project one message's `part` rows into {@link NormalizedBlock}s. `text` (skipping
+ * opencode-synthesized parts) and `reasoning` become text/thinking blocks; `tool`
+ * parts become tool blocks carrying input/output and an error flag from
+ * `state.status`. Other part types (step-start/-finish, file, patch, compaction)
+ * are metadata and skipped.
+ *
+ * @param parts - Part rows for a single message, in order.
+ * @returns The message's content blocks.
+ */
 function partBlocks(parts: PartRow[]): NormalizedBlock[] {
   const blocks: NormalizedBlock[] = [];
   for (const p of parts) {
@@ -181,6 +239,16 @@ function partBlocks(parts: PartRow[]): NormalizedBlock[] {
   return blocks;
 }
 
+/**
+ * Run a prepared query, returning `[]` on any error so the adapter tolerates schema
+ * drift (a missing table or column does not crash the read).
+ *
+ * @param db - The database handle.
+ * @param sql - SQL with `?` placeholders.
+ * @param params - Bound parameter values.
+ * @returns The rows, cast to `T`, or `[]` on failure.
+ * @typeParam T - The expected row shape.
+ */
 function query<T>(db: Database.Database, sql: string, params: unknown[] = []): T[] {
   try {
     return db.prepare(sql).all(...params) as T[];
@@ -189,6 +257,7 @@ function query<T>(db: Database.Database, sql: string, params: unknown[] = []): T
   }
 }
 
+/** Parse a JSON column, returning null for null/empty input or invalid JSON. */
 function parseJson(s: string | null): unknown {
   if (!s) return null;
   try {
@@ -198,16 +267,19 @@ function parseJson(s: string | null): unknown {
   }
 }
 
+/** Extract the model identifier from the session's `model` JSON blob (`id` or `modelID`). */
 function modelId(model: string | null): string | null {
   const m = parseJson(model) as { id?: string; modelID?: string } | null;
   return m?.id ?? m?.modelID ?? null;
 }
 
+/** Convert epoch milliseconds to an ISO string; null/non-finite maps to the epoch. */
 function msToIso(ms: number | null | undefined): string {
   if (!ms || !Number.isFinite(ms)) return new Date(0).toISOString();
   return new Date(ms).toISOString();
 }
 
+/** Pretty-print a value as 2-space JSON, falling back to `String()` if it cannot serialize. */
 function safeStringify(v: unknown): string {
   try {
     return JSON.stringify(v, null, 2);

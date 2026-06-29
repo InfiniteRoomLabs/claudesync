@@ -13,6 +13,7 @@ export interface WorkerPoolOptions {
   pull: () => PoolTask | undefined;
   /** True when no further work will ever become available. Checked only when idle. */
   isDone: () => boolean;
+  /** Optional abort signal; once aborted the pool drains in-flight tasks then resolves. */
   signal?: AbortSignal;
   /** Poll interval when idle but not done (work gated/paused). Default 25ms. */
   idleDelayMs?: number;
@@ -30,8 +31,21 @@ export interface WorkerPoolOptions {
  * but is temporarily gated (e.g. per-project cap) with no task in flight.
  */
 export class WorkerPool {
+  /**
+   * @param options - Pull source, dynamic limit, completion check, and pacing knobs.
+   */
   constructor(private readonly options: WorkerPoolOptions) {}
 
+  /**
+   * Run the pump loop until all work is done (or the signal aborts and in-flight
+   * tasks drain), then resolve. Rejects only if a task itself rejects -- tasks
+   * are expected to swallow their own errors, so a rejection tears down the pool.
+   *
+   * @returns Resolves when {@link WorkerPoolOptions.isDone} reports completion
+   * with no tasks active, or after an abort drains the active set.
+   * @throws Whatever a {@link PoolTask} rejects with; the first such rejection
+   * settles the pool.
+   */
   run(): Promise<void> {
     const { limit, pull, isDone, signal } = this.options;
     const idleDelayMs = this.options.idleDelayMs ?? 25;

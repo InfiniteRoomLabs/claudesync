@@ -16,9 +16,13 @@ import type { ChatMessage } from "../models/types.js";
  * Of course! Here's how...
  * ```
  *
- * @param messages - Ordered array of ChatMessages (root to leaf), typically
- *   from getLinearBranch().
- * @returns Formatted markdown string.
+ * Each message becomes a `## Human` or `## Assistant` section with an
+ * italicized timestamp and the trimmed text body; empty bodies render as
+ * `_[empty message]_`. An empty input yields an empty string.
+ *
+ * @param messages - Ordered array of ChatMessages (root to leaf), typically a
+ *   single branch produced by the message-tree helpers (e.g. getAllBranches).
+ * @returns The branch rendered as a markdown string.
  */
 export function formatConversation(messages: ChatMessage[]): string {
   if (messages.length === 0) {

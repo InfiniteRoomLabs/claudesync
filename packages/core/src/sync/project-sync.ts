@@ -15,8 +15,11 @@ import type { ExportFormat } from "./incremental.js";
  * commits straight from its GitBundle (not yet remapped under conversations/).
  */
 export interface ProjectConvBuilt {
+  /** Original position in the project's conversation list; sets emit order. */
   index: number;
+  /** Filesystem-safe directory name placed under `conversations/`. */
   slug: string;
+  /** Conversation-level commits from its GitBundle, not yet remapped. */
   commits: GitBundleCommit[];
 }
 
@@ -25,6 +28,13 @@ export interface ProjectConvBuilt {
  * knowledge docs, then each conversation's commits remapped under
  * `conversations/<slug>/`. Conversations are emitted in `index` order so git
  * history is stable across runs.
+ *
+ * @param project - Project metadata; drives README and bundle metadata.
+ * @param docs - Project knowledge docs, written under `knowledge/`.
+ * @param builtConvs - Per-conversation commit sets to remap and append.
+ * @param author - Name/email stamped on the leading project commit.
+ * @param exportedAt - ISO timestamp recorded in the bundle metadata.
+ * @returns A single {@link GitBundle} spanning the project and all conversations.
  */
 export function assembleProjectBundle(
   project: Project,
@@ -83,6 +93,14 @@ export function assembleProjectBundle(
  * so locally-added files (project-root and nested per-conversation INDEX.md,
  * notes, etc.) survive the re-sync. Moved verbatim from the CLI so the scheduler
  * and CLI share one implementation.
+ *
+ * Preserve globs are expanded via {@link expandPreserveForProject} so bare
+ * patterns also match nested per-conversation files, not just the project root.
+ *
+ * @param bundle - Assembled project bundle from {@link assembleProjectBundle}.
+ * @param outputPath - Project root directory (or json sidecar path stem).
+ * @param format - `git`, `files`, or `json`.
+ * @param preserve - User preserve globs, expanded for nested conversation dirs.
  */
 export async function writeProjectBundle(
   bundle: GitBundle,
@@ -111,6 +129,15 @@ export async function writeProjectBundle(
   });
 }
 
+/**
+ * Render the project root `README.md`: title, optional description, ID/created/
+ * updated metadata, doc and conversation counts, and a directory-layout legend.
+ *
+ * @param project - Project fields shown in the header and metadata block.
+ * @param docCount - Number of knowledge docs, reported in the metadata block.
+ * @param convCount - Number of conversations, reported in the metadata block.
+ * @returns The README markdown as a newline-joined string.
+ */
 export function buildProjectReadme(
   project: Pick<
     Project,

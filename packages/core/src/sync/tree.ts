@@ -26,6 +26,21 @@ export interface TreePayload {
   state: SyncState;
 }
 
+/**
+ * Writes a pre-rendered file tree to `outputPath` with the same preserve/state
+ * semantics the conversation exporters use, then records the sync state sidecar.
+ *
+ * {@link CHANGELOG_FILENAME} and any caller-supplied `preserve` globs survive
+ * the replace; {@link STATE_FILENAME} is always dropped and rewritten fresh by
+ * {@link writeSyncState} so it cannot go stale. The replace and the fresh
+ * writes run through {@link replaceWithPreserve}, making this the single source
+ * of truth shared by the `claude-code` subcommand and the `cc://` FileSink.
+ *
+ * @param outputPath - Destination directory for the tree.
+ * @param payload - The files to write and the {@link SyncState} to persist.
+ * @param preserve - Extra preserve globs, expanded via
+ * {@link expandPreserveForProject} before matching.
+ */
 export async function writeTreeWithPreserve(
   outputPath: string,
   payload: TreePayload,

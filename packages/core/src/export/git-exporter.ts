@@ -3,10 +3,13 @@ import path from "node:path";
 import git from "isomorphic-git";
 import type { GitBundle, GitBundleCommit } from "./types.js";
 
+/** Branch name the current/linear conversation and artifacts are written to. */
 const MAIN_BRANCH = "main";
 
+/** Repo-relative path -> file content (UTF-8 text or raw bytes). */
 type FileMap = Record<string, string | Uint8Array>;
 
+/** Result of routing bundle commits onto their target branches. */
 interface PartitionedCommits {
   /** Commits whose files belong on `main` (root paths + artifacts/). */
   mainCommits: GitBundleCommit[];
@@ -20,6 +23,11 @@ interface PartitionedCommits {
  * (root paths + artifacts/) or a per-leaf alt branch. A commit whose files are
  * a mix is split apart into per-branch sub-commits sharing the original
  * message and author.
+ *
+ * @param commits - The bundle's commits, with `branches/<label>/`-prefixed
+ *   paths marking alt-branch content.
+ * @returns The commits split into main and per-label alt buckets, with the
+ *   `branches/<label>/` prefix stripped from alt file paths.
  */
 function partitionCommits(commits: GitBundleCommit[]): PartitionedCommits {
   const mainCommits: GitBundleCommit[] = [];
@@ -60,10 +68,18 @@ function partitionCommits(commits: GitBundleCommit[]): PartitionedCommits {
   return { mainCommits, altCommitsByLabel };
 }
 
+/** Converts an ISO 8601 timestamp to whole epoch seconds for git authoring. */
 function toEpochSeconds(timestamp: string): number {
   return Math.floor(new Date(timestamp).getTime() / 1000);
 }
 
+/**
+ * Writes a commit's files to the working tree, stages them, and creates the
+ * commit with the bundle's author identity and timestamp (timezone offset 0).
+ *
+ * @param dir - The git working directory.
+ * @param commit - The commit to materialize and record.
+ */
 async function commitFiles(
   dir: string,
   commit: GitBundleCommit
@@ -94,6 +110,8 @@ async function commitFiles(
 /**
  * Removes everything tracked + working tree (except `.git`), used before
  * checking out an alt branch's content from a clean slate.
+ *
+ * @param dir - The git working directory to wipe (its `.git` is preserved).
  */
 async function clearWorkingTree(dir: string): Promise<void> {
   for (const entry of fs.readdirSync(dir)) {
@@ -106,6 +124,16 @@ async function clearWorkingTree(dir: string): Promise<void> {
   }
 }
 
+/**
+ * Checks out `ref`, creating it first if it does not exist. A force checkout
+ * is used so a dirty working tree (e.g. just-cleared content) does not block
+ * the switch.
+ *
+ * @param dir - The git working directory.
+ * @param ref - Branch name to check out or create.
+ * @param startPoint - Commit/ref the new branch is rooted at when created; if
+ *   omitted, the branch starts from the current HEAD.
+ */
 async function checkoutOrCreateBranch(
   dir: string,
   ref: string,
@@ -134,7 +162,13 @@ async function checkoutOrCreateBranch(
  * exist to address branch contents, not to mirror message ancestry).
  *
  * Uses a staging approach: writes to `{outputPath}.tmp`, then renames on
- * success.
+ * success. Any leftover `.tmp` from a prior failed run is removed first, and
+ * the temp dir is cleaned up if the export throws.
+ *
+ * @param bundle - The bundle to materialize.
+ * @param outputPath - Destination directory for the new repository.
+ * @throws If `outputPath` already exists (this function only creates fresh
+ *   repos; use {@link appendToGit} to add to an existing one).
  */
 export async function exportToGit(
   bundle: GitBundle,
@@ -194,7 +228,13 @@ export async function exportToGit(
  *
  * isomorphic-git computes the diff naturally: we overwrite the working tree
  * with each branch's bundle files and let `git add` + `commit` figure out
- * what changed.
+ * what changed. Alt branches new to the repo get a clean working tree first;
+ * existing ones are appended onto.
+ *
+ * @param bundle - The bundle whose commits are appended.
+ * @param outputPath - Existing repository directory to append to.
+ * @throws If `outputPath` does not exist (use {@link exportToGit} for fresh
+ *   exports).
  */
 export async function appendToGit(
   bundle: GitBundle,

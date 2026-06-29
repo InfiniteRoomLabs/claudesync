@@ -15,8 +15,20 @@
 import path from "node:path";
 import type { ParsedUri } from "./types.js";
 
+/** Matches `scheme://rest`, capturing the scheme and everything after `://`. */
 const SCHEME_RE = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/i;
 
+/**
+ * Parse a location string into a {@link ParsedUri}.
+ *
+ * A string with no `scheme://` prefix is treated as a local path and sugared to
+ * `file://` with an absolute path (so `--output ./x` keeps working). For an
+ * explicit `file://` URI the entire remainder is the path; for any other scheme
+ * the first `/` splits the authority (`[user@]host[:port]`) from the path.
+ *
+ * @param input - A `scheme://[user@][host][:port]/path[?k=v]` string, or a bare local path.
+ * @returns The parsed components, with `query` decoded.
+ */
 export function parseLocationUri(input: string): ParsedUri {
   const m = SCHEME_RE.exec(input);
   if (!m) {
@@ -50,11 +62,22 @@ export function parseLocationUri(input: string): ParsedUri {
   return { scheme, user, host, port, path: p, query };
 }
 
-/** Build a `file://` ParsedUri from a (possibly relative) local path. */
+/**
+ * Build a `file://` {@link ParsedUri} from a (possibly relative) local path.
+ *
+ * @param localPath - A local path, resolved against cwd to an absolute path.
+ * @returns A `file` URI pointing at the resolved absolute path.
+ */
 export function fileUri(localPath: string): ParsedUri {
   return { scheme: "file", path: path.resolve(localPath), query: {} };
 }
 
+/**
+ * Split an authority component into its userinfo, host, and port parts.
+ *
+ * @param authority - The `[user@]host[:port]` substring (no scheme, no path).
+ * @returns The parsed pieces; a trailing `:digits` is only treated as a port.
+ */
 function parseAuthority(authority: string): {
   user?: string;
   host?: string;
@@ -80,6 +103,12 @@ function parseAuthority(authority: string): {
   return { user, host, port };
 }
 
+/**
+ * Decode an `&`-separated query string into a key/value map.
+ *
+ * @param q - The raw query string (the part after `?`).
+ * @returns Decoded parameters; a bare key with no `=` maps to an empty string.
+ */
 function parseQuery(q: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const pair of q.split("&")) {

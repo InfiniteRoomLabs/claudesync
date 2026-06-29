@@ -9,17 +9,29 @@ import {
 import { formatConversation } from "./conversation-formatter.js";
 import { ClaudeSyncClient } from "../client/client.js";
 
+/** Tunables for {@link buildGitBundle}. */
 export interface BuildGitBundleOptions {
-  /** Git author name. Default: "Claude" */
+  /**
+   * Git author name stamped on every commit.
+   * @defaultValue "Claude"
+   */
   authorName?: string;
-  /** Git author email. Default: "claude@anthropic.com" */
+  /**
+   * Git author email stamped on every commit.
+   * @defaultValue "claude@anthropic.com"
+   */
   authorEmail?: string;
-  /** Include conversation.md and README.md in the first commit. Default: true */
+  /**
+   * Emit conversation.md + README.md in the first commit. When false, only the
+   * artifact commit (if any) is produced.
+   * @defaultValue true
+   */
   includeConversation?: boolean;
   /**
    * If true, emit one set of files per branch using the multi-branch layout
-   * (current branch at the root, alts under branches/<short-uuid>/).
-   * Default: false (legacy single-branch behavior).
+   * (current branch at the root, alternates under branches/<short-uuid>/).
+   * When false, only the current branch is rendered.
+   * @defaultValue false
    */
   multiBranch?: boolean;
 }
@@ -37,6 +49,16 @@ export interface BuildGitBundleOptions {
  * how to materialize the file paths. For real git output, the writer maps
  * commits whose paths begin with `branches/<x>/` onto separate refs; for
  * files mode, the directory layout is taken literally.
+ *
+ * @param conversation - The source conversation, including its message tree
+ *   (via `chat_messages`) and `current_leaf_message_uuid` used to pick the
+ *   branch rendered at the repo root.
+ * @param artifacts - Artifact metadata listing; an artifact commit is added
+ *   only when `files_metadata` is non-empty and content is present.
+ * @param artifactContents - Map from artifact path to its downloaded content
+ *   (text or bytes). Artifacts absent from this map are skipped.
+ * @param options - See {@link BuildGitBundleOptions}.
+ * @returns A {@link GitBundle} ready to be written to git or to files.
  */
 export function buildGitBundle(
   conversation: Conversation,
@@ -147,6 +169,14 @@ export function buildGitBundle(
   };
 }
 
+/**
+ * Renders the root README.md for the current (main) branch: conversation
+ * metadata plus a message count and a ClaudeSync attribution footer.
+ *
+ * @param conversation - Source conversation for title and metadata fields.
+ * @param branch - The main branch's messages; only its length is used here.
+ * @returns Markdown README content.
+ */
 function buildReadme(
   conversation: Conversation,
   branch: import("../models/types.js").ChatMessage[]
@@ -168,6 +198,17 @@ function buildReadme(
   return lines.join("\n");
 }
 
+/**
+ * Renders the README.md for an alternate (orphan/edited) branch placed under
+ * `branches/<short-leaf>/`, noting the branch leaf, length, and -- when known
+ * -- the message UUID where it diverged from the main branch.
+ *
+ * @param conversation - Source conversation for the title and ID.
+ * @param branch - The alternate branch's messages (root to leaf).
+ * @param divergencePointUuid - UUID of the shared message where this branch
+ *   split from main, or undefined if not determined.
+ * @returns Markdown README content for the alternate branch.
+ */
 function buildBranchReadme(
   conversation: Conversation,
   branch: import("../models/types.js").ChatMessage[],

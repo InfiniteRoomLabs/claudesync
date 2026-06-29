@@ -6,12 +6,20 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { platform } from "node:process";
 
+/**
+ * Default browser User-Agent sent with Firefox-sourced sessions. claude.ai sits
+ * behind Cloudflare, which blocks non-browser clients, so a plausible
+ * desktop-browser string is required; the exact value is not validated.
+ */
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
 /**
- * Candidate Firefox root directories, in priority order.
- * The first one that exists wins.
+ * Candidate Firefox root directories, in priority order. The first one that
+ * exists wins. On Linux the Snap location is checked early because it is the
+ * default packaging on Ubuntu 24.04, ahead of native and Flatpak paths.
+ *
+ * @returns Absolute paths to probe for a Firefox installation, most-likely first.
  */
 function getFirefoxRootCandidates(): string[] {
   const home = homedir();
@@ -31,10 +39,14 @@ function getFirefoxRootCandidates(): string[] {
 /**
  * Parse `profiles.ini` to find the default profile directory.
  *
- * The INI file contains `[Profile0]`, `[Profile1]`, etc. sections.
- * We pick the first profile where `Default=1`, falling back to `[Profile0]`.
- * The `Path` key is relative to the Firefox root (when `IsRelative=1`)
- * or absolute.
+ * The INI file contains `[Profile0]`, `[Profile1]`, etc. sections. The first
+ * profile with `Default=1` wins; if none is marked default, the first profile
+ * encountered is used as a fallback. A profile's `Path` is joined onto
+ * `firefoxRoot` when `IsRelative=1`, otherwise treated as absolute.
+ *
+ * @param firefoxRoot - Absolute path to the Firefox root that contains `profiles.ini`.
+ * @returns Absolute path to the resolved profile directory.
+ * @throws {@link AuthError} if `profiles.ini` is missing or contains no profile entries.
  */
 function resolveProfileDir(firefoxRoot: string): string {
   const iniPath = join(firefoxRoot, "profiles.ini");
@@ -128,7 +140,13 @@ function resolveProfileDir(firefoxRoot: string): string {
 }
 
 /**
- * Auto-discover the Firefox profile directory by checking standard paths.
+ * Auto-discover the Firefox profile directory by probing the standard install
+ * locations from {@link getFirefoxRootCandidates} and resolving the default
+ * profile of the first one that exists.
+ *
+ * @returns Absolute path to the discovered profile directory.
+ * @throws {@link AuthError} if no Firefox installation is found; the message
+ * lists every path checked and points to the explicit `profilePath` option.
  */
 function discoverProfilePath(): string {
   const candidates = getFirefoxRootCandidates();
@@ -147,10 +165,16 @@ function discoverProfilePath(): string {
 }
 
 /**
- * Read the `sessionKey` cookie for claude.ai from Firefox's cookies.sqlite.
+ * Read the `sessionKey` cookie for claude.ai from Firefox's `cookies.sqlite`.
  *
- * Opens the database in read-only mode with `immutable=1` URI flag to avoid
- * interfering with Firefox's WAL journal while the browser is running.
+ * Opens the database read-only with the `immutable=1` URI flag so the read does
+ * not contend with Firefox's WAL journal while the browser is running. The
+ * connection is always closed in a `finally` block.
+ *
+ * @param profilePath - Absolute path to the Firefox profile directory.
+ * @returns The raw `sessionKey` cookie value.
+ * @throws {@link AuthError} if `cookies.sqlite` is missing or holds no
+ * claude.ai `sessionKey` (typically: not logged in to claude.ai in Firefox).
  */
 function readSessionCookie(profilePath: string): string {
   const cookiesPath = join(profilePath, "cookies.sqlite");
@@ -188,17 +212,36 @@ function readSessionCookie(profilePath: string): string {
   }
 }
 
+/**
+ * {@link AuthProvider} that reads the claude.ai `sessionKey` directly from a
+ * local Firefox profile's cookie store, no env var or manual copy-paste needed.
+ *
+ * Used when the SDK runs on the same host as the user's Firefox (e.g. the CLI
+ * outside a container). The profile is auto-discovered unless an explicit path
+ * is given. The cookie is read once at construction.
+ */
 export class FirefoxProfileAuth implements AuthProvider {
+  /** Raw `sessionKey` cookie value read from the Firefox profile. */
   private readonly sessionKey: string;
+  /** User-Agent header; always {@link DEFAULT_USER_AGENT} for this provider. */
   private readonly userAgent: string;
+  /** Memoized organization UUID; `null` until the first {@link FirefoxProfileAuth.getOrganizationId} call. */
   private cachedOrgId: string | null = null;
 
+  /**
+   * @param options - Optional settings.
+   * @param options.profilePath - Absolute path to a Firefox profile directory.
+   * When omitted, the profile is auto-discovered via {@link discoverProfilePath}.
+   * @throws {@link AuthError} if the profile cannot be found or the `sessionKey`
+   * cookie cannot be read.
+   */
   constructor(options?: { profilePath?: string }) {
     const profilePath = options?.profilePath ?? discoverProfilePath();
     this.sessionKey = readSessionCookie(profilePath);
     this.userAgent = DEFAULT_USER_AGENT;
   }
 
+  /** {@inheritDoc AuthProvider.getHeaders} */
   async getHeaders(): Promise<Record<string, string>> {
     return {
       Cookie: `sessionKey=${this.sessionKey}`,
@@ -208,6 +251,7 @@ export class FirefoxProfileAuth implements AuthProvider {
     };
   }
 
+  /** {@inheritDoc AuthProvider.getOrganizationId} */
   async getOrganizationId(): Promise<string> {
     if (this.cachedOrgId) {
       return this.cachedOrgId;

@@ -27,35 +27,61 @@ import type {
   NormalizedTurn,
 } from "../surface/datastore.js";
 
+/** Default Gemini CLI session root: `~/.gemini/tmp` (one subdir per session id). */
 export function defaultGeminiHome(): string {
   return path.join(os.homedir(), ".gemini", "tmp");
 }
 
+/** One decoded JSONL event line. Fields are all optional since shapes vary by `type`. */
 interface GLine {
+  /** Event discriminator: `user`, `model`/`assistant`/`gemini`, `info`, ... Absent on session_init. */
   type?: string;
+  /** Per-event id; the last seen one becomes the session's leaf uuid. */
   id?: string;
+  /** ISO event timestamp; the latest seen advances `updatedAt`. */
   timestamp?: string;
+  /** Session id, present only on the session_init line. */
   sessionId?: string;
+  /** Session start time, present only on session_init. */
   startTime?: string;
+  /** Last-updated time, present on session_init and inside `$set`. */
   lastUpdated?: string;
+  /** Message content: a string, or an array of {@link GPart}s. */
   content?: unknown;
+  /** Mutation event carrying metadata updates (notably `summary`, the title). */
   $set?: { lastUpdated?: string; summary?: string };
 }
 
+/** One element of a message's content array (Google's content-parts model). */
 interface GPart {
+  /** Plain text fragment. */
   text?: string;
+  /** A tool invocation: tool name, arguments, and optional call id. */
   functionCall?: { name?: string; args?: unknown; id?: string };
+  /** A tool result, paired back to its {@link GPart.functionCall} by tool name. */
   functionResponse?: { name?: string; response?: unknown; id?: string };
 }
 
+/** The tool variant of {@link NormalizedBlock}, kept open until its response arrives. */
 type ToolBlock = Extract<NormalizedBlock, { kind: "tool" }>;
 
+/**
+ * {@link DatastoreAdapter} for Gemini CLI's `~/.gemini/tmp/<id>/chats/*.jsonl` stores.
+ * Each session is one JSONL file; `<id>/.project_root` supplies the project path.
+ * See {@link AdapterListItem}, {@link NormalizedSession}.
+ */
 export class GeminiCliAdapter implements DatastoreAdapter {
+  /** URI scheme this adapter answers for. */
   readonly scheme = "gemini-cli";
+  /** Memoized map of session id -> parsed session; populated on first {@link all}. */
   private cache?: Map<string, NormalizedSession>;
 
+  /**
+   * @param home - Session root to scan. Defaults to {@link defaultGeminiHome}.
+   */
   constructor(private readonly home: string = defaultGeminiHome()) {}
 
+  /** Enumerate parsed sessions as cheap list items. */
   list(): AdapterListItem[] {
     return [...this.all().values()].map((s) => ({
       id: s.id,
@@ -66,12 +92,23 @@ export class GeminiCliAdapter implements DatastoreAdapter {
     }));
   }
 
+  /**
+   * Fetch one fully parsed session.
+   *
+   * @param id - Session id from {@link list}.
+   * @returns The parsed session.
+   * @throws If no session with `id` is found.
+   */
   read(id: string): NormalizedSession {
     const s = this.all().get(id);
     if (!s) throw new Error(`gemini-cli session not found: ${id}`);
     return s;
   }
 
+  /**
+   * Parse every discovered session file once, caching the result. A single
+   * unparseable file is skipped so the rest of the store still loads.
+   */
   private all(): Map<string, NormalizedSession> {
     if (this.cache) return this.cache;
     const map = new Map<string, NormalizedSession>();
@@ -87,6 +124,13 @@ export class GeminiCliAdapter implements DatastoreAdapter {
     return map;
   }
 
+  /**
+   * Walk `<home>/<id>/chats/*.jsonl`, resolving each session's project from the
+   * sibling `.project_root` file (falling back to the session-dir id). Missing or
+   * unreadable directories are silently skipped.
+   *
+   * @returns One entry per session file with its resolved project path.
+   */
   private discover(): Array<{ file: string; project: string }> {
     const out: Array<{ file: string; project: string }> = [];
     let ids: string[];
@@ -110,6 +154,7 @@ export class GeminiCliAdapter implements DatastoreAdapter {
   }
 }
 
+/** Read the trimmed `.project_root` path, or null if absent/empty/unreadable. */
 function readProjectRoot(p: string): string | null {
   try {
     const s = fs.readFileSync(p, "utf-8").trim();
@@ -119,6 +164,17 @@ function readProjectRoot(p: string): string | null {
   }
 }
 
+/**
+ * Parse one session JSONL file into a {@link NormalizedSession}. Walks events in
+ * order: session_init seeds identity/timestamps, `$set` updates the title, `user`
+ * and model/assistant events become turns, and `functionResponse` parts are paired
+ * back to their open `functionCall` by tool name. Corrupt lines are skipped.
+ *
+ * @param file - Absolute path to the `.jsonl` session file.
+ * @param project - Project path resolved by {@link GeminiCliAdapter.discover}.
+ * @returns The parsed session, or null if it has no renderable turns (e.g. a
+ *   login-only session).
+ */
 function parseGeminiFile(file: string, project: string): NormalizedSession | null {
   const raw = fs.readFileSync(file, "utf-8");
   let sessionId = path.basename(file, ".jsonl");
@@ -127,7 +183,7 @@ function parseGeminiFile(file: string, project: string): NormalizedSession | nul
   let title: string | null = null;
   let leafUuid: string | null = null;
   const turns: NormalizedTurn[] = [];
-  // Open tool calls awaiting a functionResponse, by tool name (LIFO).
+  // Open tool calls awaiting a functionResponse, by tool name (paired FIFO).
   const openTools = new Map<string, ToolBlock[]>();
 
   for (const line of raw.split(/\r?\n/)) {
@@ -188,13 +244,22 @@ function parseGeminiFile(file: string, project: string): NormalizedSession | nul
   };
 }
 
+/** Normalize a content field to a {@link GPart} list: wrap a bare string, pass arrays through. */
 function getParts(content: unknown): GPart[] {
   if (typeof content === "string") return [{ text: content }];
   if (Array.isArray(content)) return content as GPart[];
   return [];
 }
 
-/** A user message may carry human text and/or functionResponse tool echoes. */
+/**
+ * Split a `user` event's content into human text and tool echoes. Any
+ * `functionResponse` parts are attached to their open tool block (a side effect on
+ * `openTools`) rather than producing text.
+ *
+ * @param content - The `user` event's content field.
+ * @param openTools - Tool blocks awaiting a response, keyed by tool name; mutated.
+ * @returns The joined human text and whether any tool response was consumed.
+ */
 function consumeUserContent(
   content: unknown,
   openTools: Map<string, ToolBlock[]>
@@ -212,6 +277,16 @@ function consumeUserContent(
   return { text: texts.join("\n\n"), hadResponse };
 }
 
+/**
+ * Convert a model/assistant event's content into normalized blocks: text parts
+ * become `text` blocks; `functionCall` parts become `tool` blocks that are also
+ * pushed onto `openTools` to await their response; inline `functionResponse` parts
+ * are paired immediately.
+ *
+ * @param content - The model event's content field.
+ * @param openTools - Tool blocks awaiting a response, keyed by tool name; mutated.
+ * @returns The assistant turn's blocks, in order.
+ */
 function assistantBlocks(content: unknown, openTools: Map<string, ToolBlock[]>): NormalizedBlock[] {
   const blocks: NormalizedBlock[] = [];
   for (const part of getParts(content)) {
@@ -232,6 +307,14 @@ function assistantBlocks(content: unknown, openTools: Map<string, ToolBlock[]>):
   return blocks;
 }
 
+/**
+ * Attach a tool result to the oldest open tool block of the same name (FIFO via
+ * `shift`), stringifying non-string responses. A response with no matching open
+ * call is dropped.
+ *
+ * @param fr - The `functionResponse` payload (tool name and result).
+ * @param openTools - Tool blocks awaiting a response, keyed by tool name; mutated.
+ */
 function attachResponse(
   fr: { name?: string; response?: unknown },
   openTools: Map<string, ToolBlock[]>
@@ -244,6 +327,7 @@ function attachResponse(
   if (target) target.output = out;
 }
 
+/** Pretty-print a value as 2-space JSON, falling back to `String()` if it cannot serialize. */
 function safeStringify(v: unknown): string {
   try {
     return JSON.stringify(v, null, 2);

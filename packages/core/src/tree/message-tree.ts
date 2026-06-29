@@ -1,22 +1,37 @@
 import type { ChatMessage } from "../models/types.js";
 
 /**
- * A node in the message tree, wrapping a ChatMessage with child references.
+ * A node in the message tree, wrapping a {@link ChatMessage} with the child
+ * references that the flat API response does not carry. claude.ai returns
+ * messages as a flat array linked only by `parent_message_uuid`; this node is
+ * the materialized parent -> children form produced by {@link buildMessageTree}.
  */
 export interface MessageTreeNode {
+  /** The wrapped message, exactly as returned by the API. */
   message: ChatMessage;
+  /**
+   * Direct replies to {@link MessageTreeNode.message}, sorted ascending by
+   * {@link ChatMessage.index}. More than one child means the conversation
+   * branched at this message (e.g. an edited prompt or regenerated reply).
+   */
   children: MessageTreeNode[];
 }
 
 /**
- * Builds a tree structure from a flat array of ChatMessages.
+ * Materializes the parent -> children tree from a flat array of messages.
  *
- * Messages are linked via `parent_message_uuid`. The root message has a
- * `parent_message_uuid` that does not correspond to any other message's uuid
- * (the API uses a sentinel value for the first message).
+ * Each message is linked to its parent via `parent_message_uuid`. A root
+ * message's `parent_message_uuid` does not match any message's `uuid` (the API
+ * uses "" or another sentinel for the first message), so it simply has no
+ * parent node to attach to. Children of each node are sorted by
+ * {@link ChatMessage.index} so traversal order is deterministic.
  *
- * @returns A Map from message uuid to its MessageTreeNode. To find root nodes,
- *   look for nodes whose parent_message_uuid is not a key in the map.
+ * The returned map owns the node objects; callers walk it with the other helpers
+ * here ({@link findLeafMessages}, {@link getLinearBranch}, {@link getAllBranches}).
+ *
+ * @param messages - The conversation's messages in any order.
+ * @returns A map from message `uuid` to its {@link MessageTreeNode}. Root nodes
+ *   are those whose `parent_message_uuid` is not a key in the map.
  */
 export function buildMessageTree(
   messages: ChatMessage[]
@@ -46,8 +61,11 @@ export function buildMessageTree(
 }
 
 /**
- * Finds all leaf messages -- messages that have no children in the tree.
- * Each leaf represents the tip of a conversation branch.
+ * Collects every leaf message -- a node with no children. Each leaf is the tip
+ * of one conversation branch, so the leaf count equals the branch count.
+ *
+ * @param nodeMap - A tree built by {@link buildMessageTree}.
+ * @returns The {@link ChatMessage} at each branch tip, in map iteration order.
  */
 export function findLeafMessages(
   nodeMap: Map<string, MessageTreeNode>
@@ -62,13 +80,14 @@ export function findLeafMessages(
 }
 
 /**
- * Returns the linear path from the root to a specific leaf message,
- * following parent_message_uuid links upward and then reversing.
+ * Walks the single root-to-target path by following `parent_message_uuid` links
+ * upward from the target and reversing. The target is typically a leaf, but any
+ * node works -- the result ends at whatever `targetUuid` names.
  *
- * @param nodeMap - The tree built by buildMessageTree()
- * @param leafUuid - The uuid of the target leaf message
- * @returns Ordered array of ChatMessages from root to the specified leaf,
- *   or an empty array if the leafUuid is not found in the tree.
+ * @param nodeMap - A tree built by {@link buildMessageTree}.
+ * @param leafUuid - The `uuid` of the target message (usually a branch tip).
+ * @returns The messages from root to target in order, or an empty array when
+ *   `leafUuid` is not present in the map.
  */
 export function getLinearBranch(
   nodeMap: Map<string, MessageTreeNode>,
@@ -95,8 +114,13 @@ export function getLinearBranch(
 }
 
 /**
- * Returns one linear branch (root -> leaf) per leaf in the tree.
- * Keys are leaf message uuids, values are the message arrays.
+ * Expands the tree into one root-to-leaf branch per leaf. Shared prefixes
+ * between branches are duplicated; use {@link findDivergencePoint} to locate
+ * where two branches split.
+ *
+ * @param nodeMap - A tree built by {@link buildMessageTree}.
+ * @returns A map keyed by leaf `uuid`, each value the root-to-leaf message array
+ *   from {@link getLinearBranch}.
  */
 export function getAllBranches(
   nodeMap: Map<string, MessageTreeNode>
@@ -109,10 +133,15 @@ export function getAllBranches(
 }
 
 /**
- * Finds the deepest message uuid shared by both branches (the divergence
- * point). Branches are expected as root-to-leaf arrays from getLinearBranch().
+ * Finds the last message both branches share -- the point past which they
+ * diverge. Because both inputs are root-to-leaf arrays from
+ * {@link getLinearBranch}, their common ancestors form a shared prefix; this
+ * returns the `uuid` of the final element of that prefix.
  *
- * Returns undefined if the branches share no ancestor.
+ * @param branchA - A root-to-leaf branch from {@link getLinearBranch}.
+ * @param branchB - The other root-to-leaf branch to compare against.
+ * @returns The deepest common ancestor's `uuid`, or undefined when the branches
+ *   share no common prefix.
  */
 export function findDivergencePoint(
   branchA: ChatMessage[],
@@ -131,10 +160,17 @@ export function findDivergencePoint(
 }
 
 /**
- * Picks a stable, short, unique label for a leaf uuid given a set of all leaf
- * uuids in the same conversation. Starts at 8 characters and grows until the
- * prefix is unique within the set. Caps at 16 characters to keep names
- * readable; throws if even 16 chars collide (extremely unlikely).
+ * Picks a stable, short, unique label for a leaf by taking the shortest uuid
+ * prefix (8, 12, or 16 chars) that no other leaf in the conversation shares.
+ * Used to name per-branch outputs (e.g. export file/dir names) without leaking
+ * full uuids. The result is stable for a fixed `allLeafUuids` set.
+ *
+ * @param leafUuid - The leaf `uuid` to label.
+ * @param allLeafUuids - Every leaf `uuid` in the conversation, including
+ *   `leafUuid`; used to detect prefix collisions.
+ * @returns The shortest non-colliding prefix of `leafUuid`, 8 to 16 chars.
+ * @throws Error when even the 16-char prefix collides with another leaf
+ *   (effectively impossible for real uuids).
  */
 export function shortLeafLabel(
   leafUuid: string,

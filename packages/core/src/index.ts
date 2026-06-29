@@ -1,16 +1,37 @@
-// Auth
+/**
+ * Public API barrel for `@infinite-room-labs/claudesync-core`, the SDK that wraps
+ * the undocumented claude.ai web API and the local agent-session caches.
+ *
+ * Everything a consumer (the MCP server, CLI, or extension) is meant to use is
+ * re-exported here; importing from deep module paths is not supported. The
+ * surface is grouped into:
+ *
+ * - Auth -- session-cookie providers ({@link EnvAuth}, {@link FirefoxProfileAuth}).
+ * - Client -- the {@link ClaudeSyncClient} HTTP layer, endpoints, and errors.
+ * - Models -- Zod schemas and their inferred types for every API response.
+ * - Tree -- {@link buildMessageTree} and helpers for the branching message tree.
+ * - Export -- rendering conversations into git bundles and Markdown.
+ * - Sync -- incremental state, diffing, changelogs, and the org-wide scheduler.
+ * - Concurrency -- rate limiting, adaptive backpressure, and the worker pool.
+ * - Surface -- the source/sink seam plus the `cc://`, datastore, and Class-D
+ *   adapters (aider, gemini-cli, opencode) for local agent transcripts.
+ *
+ * @packageDocumentation
+ */
+
+// Auth -- session-cookie providers and the auth error type
 export type { AuthProvider } from "./auth/types.js";
 export { EnvAuth } from "./auth/env.js";
 export { FirefoxProfileAuth } from "./auth/firefox.js";
 export { AuthError } from "./auth/errors.js";
 
-// Client
+// Client -- the claude.ai HTTP client, its options, errors, and endpoint helpers
 export { ClaudeSyncClient } from "./client/client.js";
 export type { ClientOptions } from "./client/client.js";
 export { ClaudeSyncError, RateLimitError } from "./client/errors.js";
 export { ENDPOINTS, buildUrl } from "./client/endpoints.js";
 
-// Models -- Schemas
+// Models -- Zod schemas validating each claude.ai API response shape
 export {
   OrganizationSchema,
   ConversationSettingsSchema,
@@ -26,7 +47,7 @@ export {
   ProjectDocSchema,
 } from "./models/schemas.js";
 
-// Models -- Types
+// Models -- Types inferred from the schemas above
 export type {
   Organization,
   ConversationSettings,
@@ -42,7 +63,7 @@ export type {
   ProjectDoc,
 } from "./models/types.js";
 
-// Tree utilities
+// Tree utilities -- build and traverse the branching message tree
 export type { MessageTreeNode } from "./tree/message-tree.js";
 export {
   buildMessageTree,
@@ -53,14 +74,14 @@ export {
   shortLeafLabel,
 } from "./tree/message-tree.js";
 
-// Export engine
+// Export engine -- render conversations into git bundles and Markdown
 export type { GitBundle, GitBundleCommit } from "./export/types.js";
 export type { BuildGitBundleOptions } from "./export/bundle-builder.js";
 export { buildGitBundle } from "./export/bundle-builder.js";
 export { exportToGit, appendToGit } from "./export/git-exporter.js";
 export { formatConversation } from "./export/conversation-formatter.js";
 
-// Sync engine
+// Sync engine -- persisted sync state, conversation diffing, and changelogs
 export type {
   SyncState,
   SyncStateLeaf,
@@ -101,7 +122,7 @@ export { fetchAndBuild } from "./sync/fetch.js";
 export type { ReplaceWithPreserveOptions } from "./sync/files-mode.js";
 export { replaceWithPreserve, walkRelative, expandPreserveForProject } from "./sync/files-mode.js";
 
-// Concurrency / backpressure
+// Concurrency / backpressure -- rate limiter, adaptive controller, worker pool
 export type {
   RequestLimiter,
   Clock,
@@ -118,7 +139,7 @@ export {
   WorkerPool,
 } from "./concurrency/index.js";
 
-// Concurrency config
+// Concurrency config -- schema and loader for concurrency/backpressure settings
 export type {
   ConcurrencyConfig,
   ConcurrencyFlags,
@@ -130,7 +151,7 @@ export {
   resolveConcurrencyConfig,
 } from "./config/index.js";
 
-// Parallel org sync
+// Parallel org sync -- whole-org scheduler and per-project bundle assembly
 export type {
   ProgressEvent,
   RunOrgSyncOptions,
@@ -144,10 +165,10 @@ export {
   buildProjectReadme,
 } from "./sync/project-sync.js";
 
-// Naming helpers
+// Naming helpers -- slugify titles into filesystem-safe names
 export { slugify, safeSlug, displayName } from "./util/naming.js";
 
-// Glob helpers
+// Glob helpers -- compile and match glob patterns for path filtering
 export { matchGlob, matchAnyGlob, compileGlob } from "./util/glob.js";
 
 // Surface seam (PRD 001 Phase 0): addressable source/sink surfaces + URI grammar

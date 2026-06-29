@@ -36,29 +36,48 @@ import {
 import { buildMessageTree, findLeafMessages } from "../tree/message-tree.js";
 import { replaceWithPreserve } from "./files-mode.js";
 
+/** On-disk export layout: a git repo, a flat file tree, or a single JSON blob. */
 export type ExportFormat = "git" | "files" | "json";
 
+/** Inputs to {@link materializeConversation}: the built data plus where/how to write it. */
 export interface MaterializeArgs {
+  /** Replayable git bundle (commits + metadata); the json snapshot source. */
   bundle: GitBundle;
+  /** Full conversation, used for state-file leaves and changelog diffing. */
   conversation: Conversation;
+  /** Artifact list, recorded in state and diffed for changelog entries. */
   artifacts: ArtifactListResponse;
+  /** List-endpoint summary; supplies `updated_at` for the state file. */
   summary: ConversationSummary;
   /** Prior state for this output (drives changelog diff + full/incremental). */
   prevState: SyncState | undefined;
   /** Conversation directory (files/git) or the dir that holds `<slug>.json`. */
   outputPath: string;
+  /** On-disk layout to produce: `git`, `files`, or `json`. */
   format: ExportFormat;
+  /** Files-mode preserve globs, relative to the conversation directory. */
   preserve: readonly string[];
 }
 
+/** Outcome of {@link materializeConversation}: write kind and changelog status. */
 export interface MaterializeResult {
+  /** `full` on first write (no prior state), `incremental` on a re-sync. */
   action: "full" | "incremental";
+  /** True when a CHANGELOG.md section was appended (never for json mode). */
   changelogWritten: boolean;
 }
 
 /**
  * Writes the conversation to `outputPath` in the requested format, appends a
  * changelog section if anything changed, and rewrites the sync-state sidecar.
+ *
+ * For `git`, exports a fresh repo when the output is new and replays onto the
+ * existing one otherwise, then ensures the state file is gitignored. For
+ * `files`, rebuilds the tree via {@link writeFilesMode}. For `json`, dumps a
+ * single `<outputPath>.json` snapshot and skips the changelog entirely.
+ *
+ * @param args - Built bundle/conversation/artifacts plus output target and format.
+ * @returns The action taken (`full` vs `incremental`) and whether a changelog wrote.
  */
 export async function materializeConversation(
   args: MaterializeArgs
@@ -115,6 +134,10 @@ export async function materializeConversation(
  * explicit rescue. We always preserve `CHANGELOG.md` (appended to by the
  * sync), drop the prior `.claudesync-state.json` (rewritten by the caller),
  * and copy back anything else in the stash matching the `preserve` glob list.
+ *
+ * @param bundle - Built bundle replayed into the directory via {@link exportToGit}.
+ * @param outputPath - Conversation directory to (re)build.
+ * @param preserve - POSIX globs of locally-added files to rescue across the rebuild.
  */
 async function writeFilesMode(
   bundle: GitBundle,
@@ -133,6 +156,11 @@ async function writeFilesMode(
   });
 }
 
+/**
+ * Idempotently add the sync-state sidecar (and its `.tmp`) to the repo's
+ * `.gitignore`, so the local-only state file never lands in git history.
+ * No-op when the line is already present.
+ */
 function ensureGitignore(repoDir: string): void {
   const gitignorePath = path.join(repoDir, ".gitignore");
   const line = STATE_FILENAME;
@@ -148,6 +176,18 @@ function ensureGitignore(repoDir: string): void {
   fs.writeFileSync(gitignorePath, contents, "utf-8");
 }
 
+/**
+ * Compute and persist the sync-state sidecar for this conversation. Snapshots
+ * the leaf messages (from the rebuilt message tree), artifact metadata, the
+ * server `updated_at`, and the current leaf uuid -- the inputs
+ * {@link isSameByListMetadata} and {@link diffConversation} read on the next run.
+ *
+ * @param dir - Directory the state file is written into.
+ * @param summary - List-endpoint summary supplying `updated_at`.
+ * @param conversation - Full conversation; source of the message tree and leaves.
+ * @param artifacts - Artifact list recorded for next-run diffing.
+ * @param action - Whether this write was a full or incremental sync.
+ */
 function writeStateFile(
   dir: string,
   summary: ConversationSummary,

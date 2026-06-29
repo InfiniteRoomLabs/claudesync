@@ -6,43 +6,62 @@ import { join } from "node:path";
 /**
  * Concurrency / backpressure configuration for parallel org sync. Validated with
  * zod and `.passthrough()` so unknown keys in a user's config file are tolerated
- * (forward-compat with future options).
+ * (forward-compat with future options). Every group has an object-level
+ * `.default({})` so a partial or absent config still parses to fully-populated
+ * defaults.
  */
 export const ConcurrencyConfigSchema = z
   .object({
+    /** Worker-pool bounds for the adaptive sync scheduler. */
     pool: z
       .object({
+        /** Floor on concurrent workers; the pool never shrinks below this. */
         min: z.number().int().min(1).default(1),
+        /** Ceiling on concurrent workers; the pool never grows past this. */
         max: z.number().int().min(1).default(8),
+        /** Initial worker count before ramp-up adjusts it. */
         start: z.number().int().min(1).default(2),
       })
       .default({}),
     /** Optional per-project concurrency cap (fairness). Unset = no cap. */
     projectConcurrency: z.number().int().min(1).optional(),
+    /** How the scheduler grows and shrinks the pool under load. */
     ramp: z
       .object({
+        /** Consecutive successes before adding a worker. */
         increaseAfter: z.number().int().min(1).default(5),
+        /** Multiplier applied to the pool size on backoff (0.1-0.99). */
         decreaseFactor: z.number().min(0.1).max(0.99).default(0.5),
       })
       .default({}),
+    /** Per-request pacing and retry policy. */
     request: z
       .object({
+        /** Minimum delay between successive requests, in milliseconds. */
         minGapMs: z.number().int().min(0).default(150),
+        /** Maximum retry attempts per request before giving up. */
         maxRetries: z.number().int().min(0).default(5),
       })
       .default({}),
   })
   .passthrough();
 
+/** Validated, fully-defaulted concurrency config; inferred from {@link ConcurrencyConfigSchema}. */
 export type ConcurrencyConfig = z.infer<typeof ConcurrencyConfigSchema>;
 
+/** Name of the JSON config file looked up in cwd then the home directory. */
 export const CONFIG_FILENAME = ".claudesyncrc.json";
 
 /**
- * Read the first config file found: cwd, then home directory. Returns the raw
- * parsed object (unvalidated) or {} if none/invalid. Validation happens in
- * resolveConcurrencyConfig so a malformed file degrades to defaults rather than
- * crashing the CLI.
+ * Read the first {@link CONFIG_FILENAME} found: cwd first, then home directory.
+ * Returns the raw parsed object (UNVALIDATED) or `{}` when none exists or the
+ * file is unreadable/malformed. Validation is deferred to
+ * {@link resolveConcurrencyConfig} so a broken config degrades to defaults
+ * rather than crashing the CLI.
+ *
+ * @param cwd - Directory checked first; defaults to the process cwd.
+ * @param home - Fallback directory; defaults to the OS home directory.
+ * @returns The parsed JSON object, or `{}` if absent/invalid.
  */
 export function loadConfigFile(
   cwd: string = process.cwd(),
@@ -64,15 +83,30 @@ export function loadConfigFile(
   return {};
 }
 
-/** CLI flag values (already parsed to numbers by commander). */
+/**
+ * CLI flag values (already parsed to numbers by commander) that override config
+ * file and env values in {@link resolveConcurrencyConfig}.
+ */
 export interface ConcurrencyFlags {
+  /** Overrides `pool.max`. */
   workers?: number;
+  /** Overrides `pool.min`. */
   minWorkers?: number;
+  /** Overrides `pool.start`. */
   startWorkers?: number;
+  /** Overrides `projectConcurrency`. */
   projectWorkers?: number;
+  /** When true, forces fully sequential sync (pool collapses to 1/1/1). */
   noParallel?: boolean;
 }
 
+/**
+ * Parse an environment variable as a finite number.
+ *
+ * @param env - Environment map to read from.
+ * @param key - Variable name to look up.
+ * @returns The parsed number, or undefined when unset, empty, or non-numeric.
+ */
 function envNum(env: NodeJS.ProcessEnv, key: string): number | undefined {
   const raw = env[key];
   if (raw == null || raw === "") return undefined;
@@ -81,9 +115,17 @@ function envNum(env: NodeJS.ProcessEnv, key: string): number | undefined {
 }
 
 /**
- * Merge config sources by precedence: CLI flag > env var > config file >
- * built-in default. Clamps pool sizes so that 1 <= min <= start <= max, and
- * collapses to fully sequential when --no-parallel is set.
+ * Resolve the effective concurrency config by merging all sources by
+ * precedence: CLI flag > env var > config file > built-in default. Pool sizes
+ * are clamped so that `1 <= min <= start <= max`, and `--no-parallel` collapses
+ * the pool to fully sequential (1/1/1). The result is re-parsed through
+ * {@link ConcurrencyConfigSchema}, so it is always valid and fully populated.
+ *
+ * @param flags - CLI flags (highest precedence); defaults to none.
+ * @param env - Environment map read for `CLAUDESYNC_*` overrides; defaults to
+ *   `process.env`.
+ * @param file - Raw parsed config object; defaults to {@link loadConfigFile}.
+ * @returns A validated, clamped {@link ConcurrencyConfig}.
  */
 export function resolveConcurrencyConfig(
   flags: ConcurrencyFlags = {},

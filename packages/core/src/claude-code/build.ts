@@ -26,11 +26,17 @@ import { renderSession, type ClaudeCodeFidelity } from "./render.js";
 
 /** A discovered session plus the peeked metadata + computed output relpath. */
 export interface PlannedSession {
+  /** Session UUID. */
   sessionId: string;
+  /** Absolute path to the session's `<sessionId>.jsonl` file. */
   jsonlPath: string;
+  /** Absolute path to the `<sessionId>/` sidecar dir, or null if absent. */
   sidecarDir: string | null;
+  /** Human-readable title (latest `ai-title`), or null. */
   title: string | null;
+  /** Canonical leaf uuid; used for the unchanged-since-last-sync check. */
   leafUuid: string | null;
+  /** ISO timestamp of the last line; used for the unchanged-since-last-sync check. */
   updatedAt: string;
   /** The dash-encoded project directory name this session belongs to. */
   projectDir: string;
@@ -38,7 +44,9 @@ export interface PlannedSession {
   relPath: string;
 }
 
+/** Options for {@link buildSessionTree}; all optional, with the defaults noted per field. */
 export interface BuildSessionTreeOptions {
+  /** Render fidelity; defaults to `compact`. */
   fidelity?: ClaudeCodeFidelity;
   /** Inline byte cap for a single tool output in `truncated` mode. */
   truncateCapBytes?: number;
@@ -46,9 +54,13 @@ export interface BuildSessionTreeOptions {
   includeSubagents?: boolean;
 }
 
+/** A {@link DiscoveredSession} enriched with the metadata peeked in pass 1 of {@link planSessions}. */
 interface PeekedSession extends DiscoveredSession {
+  /** Human-readable title (latest `ai-title`), or null. */
   title: string | null;
+  /** Canonical leaf uuid, or null. */
   leafUuid: string | null;
+  /** ISO timestamp of the last line. */
   updatedAt: string;
 }
 
@@ -57,6 +69,10 @@ interface PeekedSession extends DiscoveredSession {
  * directory names + freshness checks, and compute each session's output
  * relpath. Grouping/slug order follows `discoverSessions` order so both the
  * subcommand and the seam land sessions in identical directories.
+ *
+ * @param ccHome - Claude Code home dir (the parent of `projects/`).
+ * @param onError - Called per session whose JSONL fails to parse; that session is dropped from the plan, not fatal.
+ * @returns One {@link PlannedSession} per parseable session, with output relpaths assigned.
  */
 export function planSessions(
   ccHome: string,
@@ -102,7 +118,18 @@ export function planSessions(
   return planned;
 }
 
-/** Parse + render a single session (and its subagents) into a writable tree. */
+/**
+ * Parse + render a single session (and its subagents) into a writable tree.
+ *
+ * Produces `conversation.md`, `README.md`, any `tool-outputs/` spill files, and
+ * -- when enabled -- a `subagents/<slug>/...` subtree per sidechain, plus the
+ * {@link SyncState} that drives the unchanged-since-last-sync check.
+ *
+ * @param meta - The session to build; only its id and on-disk paths are needed.
+ * @param opts - Render fidelity, truncation cap, and subagent inclusion (see {@link BuildSessionTreeOptions}).
+ * @returns The `files` map (relpath -> content) plus the session's sync `state`.
+ * @throws If the session JSONL cannot be read or parsed.
+ */
 export function buildSessionTree(
   meta: Pick<PlannedSession, "sessionId" | "jsonlPath" | "sidecarDir">,
   opts: BuildSessionTreeOptions = {}
@@ -130,7 +157,16 @@ export function buildSessionTree(
 
 // --- subagents ------------------------------------------------------------
 
-/** Render each `subagents/agent-*.jsonl` sidechain into `subagents/<slug>/...` tree entries. */
+/**
+ * Render each `subagents/agent-*.jsonl` sidechain into `subagents/<slug>/...`
+ * tree entries. Slugs come from each sidechain's `agentType` (disambiguated by
+ * id). A missing `subagents/` dir, no sidechains, or one bad sidechain log all
+ * degrade gracefully rather than failing the parent session.
+ *
+ * @param sidecarDir - The session's `<sessionId>/` sidecar dir.
+ * @param renderOpts - Fidelity and truncation cap forwarded to {@link renderSession}.
+ * @returns Relpath -> content for every successfully rendered subagent; empty when there are none.
+ */
 function buildSubagentFiles(
   sidecarDir: string,
   renderOpts: { fidelity: ClaudeCodeFidelity; truncateCapBytes?: number }
@@ -171,6 +207,7 @@ function buildSubagentFiles(
   return out;
 }
 
+/** Read a subagent's `agent-<id>.meta.json` sidecar; returns `{}` if missing or unparseable. */
 function readSubagentMeta(metaPath: string): { agentType?: string } {
   try {
     return JSON.parse(fs.readFileSync(metaPath, "utf-8"));
@@ -181,6 +218,15 @@ function readSubagentMeta(metaPath: string): { agentType?: string } {
 
 // --- state + naming -------------------------------------------------------
 
+/**
+ * Build the {@link SyncState} sidecar persisted next to a rendered session. The
+ * `current_leaf_message_uuid` + `updated_at` pair is what `skipSame` re-syncs
+ * compare against to detect an unchanged session.
+ *
+ * @param session - The parsed session the state describes.
+ * @param messageCount - Turn count on the rendered branch, recorded as the leaf's `last_message_index`.
+ * @returns A fully populated state with `last_sync_action: "full"` and the current timestamp.
+ */
 export function buildState(session: ParsedSession, messageCount: number): SyncState {
   return {
     schema_version: 1,
@@ -202,6 +248,9 @@ export function buildState(session: ParsedSession, messageCount: number): SyncSt
  * Project slug from the dash-encoded project dir name. CC encodes the cwd by
  * replacing every `/` with `-`, which is already unique per project; we strip
  * the leading dash(es) for a cleaner directory name.
+ *
+ * @param projectDir - The dash-encoded project dir name (e.g. `-home-deathnerd-foo`).
+ * @returns The slug with leading dashes stripped, or `"root"` if nothing remains.
  */
 export function projectDirToSlug(projectDir: string): string {
   return projectDir.replace(/^-+/, "") || "root";

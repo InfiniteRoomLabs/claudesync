@@ -24,6 +24,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { matchAnyGlob } from "../util/glob.js";
 
+/**
+ * Inputs to {@link replaceWithPreserve}: where to write, how to write, and which
+ * locally-added files to rescue from the pre-existing tree.
+ */
 export interface ReplaceWithPreserveOptions {
   /** Final destination directory. May or may not exist. */
   outputPath: string;
@@ -70,6 +74,24 @@ export function expandPreserveForProject(
   return globs.flatMap((p) => [p, `**/${p}`]);
 }
 
+/**
+ * Rebuild `outputPath` from scratch while rescuing locally-added files.
+ *
+ * Stashes any existing `outputPath` to a sibling `<outputPath>.prev`, runs
+ * {@link ReplaceWithPreserveOptions.writeFresh} to lay down the canonical tree,
+ * then copies back stash entries that match `alwaysPreserve` or `preserveGlobs`
+ * (minus `alwaysDrop`). Files the fresh write already produced win -- the stash
+ * copy is skipped for any path that now exists.
+ *
+ * The operation is atomic with respect to failure: if `writeFresh` or the
+ * restore throws, the half-written output is removed and the stash is renamed
+ * back into place, then the error is re-thrown. On the first sync (no existing
+ * output) it is just `writeFresh` with no stash dance.
+ *
+ * @param opts - Destination, fresh-write callback, and preserve/drop rules.
+ * @throws Re-throws whatever {@link ReplaceWithPreserveOptions.writeFresh} or
+ *   the restore step throws, after rolling the prior tree back.
+ */
 export async function replaceWithPreserve(
   opts: ReplaceWithPreserveOptions
 ): Promise<void> {
@@ -109,6 +131,16 @@ export async function replaceWithPreserve(
   }
 }
 
+/**
+ * Copy preserved files from a stash directory back into the freshly written
+ * output, skipping any path the fresh write already produced (bundle wins).
+ *
+ * @param stash - Directory holding the prior tree (`<outputPath>.prev`).
+ * @param outputPath - Freshly written destination to copy survivors into.
+ * @param alwaysPreserve - Exact relative paths to preserve regardless of globs.
+ * @param alwaysDrop - Exact relative paths to drop even if they match a glob.
+ * @param preserveGlobs - POSIX globs of relative paths to preserve.
+ */
 function restoreFromStash(
   stash: string,
   outputPath: string,

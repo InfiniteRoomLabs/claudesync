@@ -17,14 +17,26 @@
 import { slugify } from "../util/naming.js";
 import type { CcContentBlock, CcLine, ParsedSession } from "./parse.js";
 
+/**
+ * How much of each turn lands inline in `conversation.md` vs. an external file.
+ *
+ * - `compact`: text turns plus a one-line tool reference; full tool I/O goes to
+ *   `tool-outputs/`; thinking is dropped.
+ * - `truncated`: text + thinking inline, tool input inline, tool output inline up
+ *   to a byte cap with the overflow spilled to a file.
+ * - `full`: everything inline, no external files.
+ */
 export type ClaudeCodeFidelity = "compact" | "truncated" | "full";
 
+/** Knobs for {@link renderSession}. Both fields have defaults when passed partially. */
 export interface RenderOptions {
+  /** How much detail to inline; see {@link ClaudeCodeFidelity}. */
   fidelity: ClaudeCodeFidelity;
   /** Inline byte cap for a single tool output in `truncated` mode. */
   truncateCapBytes: number;
 }
 
+/** The rendered artifacts for one session: the two markdown bodies plus any spill files. */
 export interface RenderedSession {
   /** conversation.md body. */
   markdown: string;
@@ -36,8 +48,21 @@ export interface RenderedSession {
   messageCount: number;
 }
 
+/** Default inline cap for a single tool output in `truncated` mode (20 KiB). */
 const DEFAULT_TRUNCATE_CAP_BYTES = 20 * 1024;
 
+/**
+ * Render a parsed session into greppable markdown plus any external spill files.
+ *
+ * Linearizes the message DAG to the live branch (via {@link linearBranch}),
+ * keeps only `user`/`assistant` turns, and emits one `## Human`/`## Assistant`
+ * section per turn. Tool outputs are matched to their calls through the
+ * tool_result echo lines collected by {@link collectToolResults}.
+ *
+ * @param session - The parsed session to render.
+ * @param opts - Partial {@link RenderOptions}; defaults to `compact` fidelity and the 20 KiB cap.
+ * @returns The rendered markdown, README, spill files, and branch turn count.
+ */
 export function renderSession(
   session: ParsedSession,
   opts: Partial<RenderOptions> = {}
@@ -92,6 +117,10 @@ export function renderSession(
  * non-transcript `attachment`/`queue-operation` nodes that sit in the DAG),
  * then reverse. This yields the canonical branch and drops any rewound/off-leaf
  * turns left in the file. Callers filter the result to the turn types they want.
+ *
+ * @param lines - All parsed lines (transcript and non-transcript nodes alike).
+ * @param leafUuid - The branch leaf to start from; if null or not found, the last line with a uuid is used.
+ * @returns The root-to-leaf chain in chronological order (a cycle guard stops on any repeated uuid).
  */
 export function linearBranch(lines: CcLine[], leafUuid: string | null): CcLine[] {
   const byUuid = new Map<string, CcLine>();
@@ -140,6 +169,17 @@ function collectToolResults(branch: CcLine[]): Map<string, string> {
 
 // --- assistant block rendering -------------------------------------------
 
+/**
+ * Render one assistant turn's content blocks into a markdown body. Thinking is
+ * dropped in `compact`; tool_use blocks are delegated to {@link renderToolUse}.
+ *
+ * @param line - The assistant line to render.
+ * @param toolResults - tool_use_id -> rendered result text, from {@link collectToolResults}.
+ * @param opts - Active fidelity and the truncation cap.
+ * @param externalFiles - Accumulator the tool renderer writes spill files into.
+ * @param nextSeq - Monotonic sequence source for unique spill-file names.
+ * @returns The joined block bodies, or "" when nothing renders (e.g. thinking-only in compact).
+ */
 function renderAssistant(
   line: CcLine,
   toolResults: Map<string, string>,
@@ -173,6 +213,19 @@ function renderAssistant(
   return parts.filter(Boolean).join("\n\n");
 }
 
+/**
+ * Render a single `tool_use` block (and its matched output) at the chosen
+ * fidelity. In `compact` the whole I/O is spilled to a `tool-outputs/` file and
+ * only a one-line link is inlined; in `truncated` the output is inlined up to
+ * the byte cap, spilling the remainder; in `full` everything is inlined.
+ *
+ * @param block - The `tool_use` content block.
+ * @param toolResults - tool_use_id -> rendered result text, from {@link collectToolResults}.
+ * @param opts - Active fidelity and the truncation cap.
+ * @param externalFiles - Accumulator that receives any spill file (keyed by relative path).
+ * @param nextSeq - Monotonic sequence source for unique spill-file names.
+ * @returns The markdown for this tool call.
+ */
 function renderToolUse(
   block: CcContentBlock,
   toolResults: Map<string, string>,
@@ -212,12 +265,14 @@ function renderToolUse(
   return lines.join("\n");
 }
 
+/** Build a stable, collision-resistant spill-file relpath: `tool-outputs/NNNN-<slug>-<shortid>.md`. */
 function externalFilePath(seq: number, name: string, toolId: string): string {
   const num = String(seq).padStart(4, "0");
   const shortId = toolId.replace(/^toolu_/, "").slice(0, 8) || "noid";
   return `tool-outputs/${num}-${slugify(name) || "tool"}-${shortId}.md`;
 }
 
+/** Assemble the full markdown body of a spilled `tool-outputs/` file (header + fenced input/output). */
 function toolFileBody(name: string, toolId: string, input: string, output: string): string {
   return [
     `# Tool: ${name}`,
@@ -252,6 +307,7 @@ function humanText(content: string | CcContentBlock[] | undefined): string | nul
   return texts.join("\n\n");
 }
 
+/** Flatten a tool_result `content` value (string, block array, or arbitrary value) to display text. */
 function stringifyContent(content: unknown): string {
   if (content == null) return "";
   if (typeof content === "string") return content;
@@ -268,6 +324,7 @@ function stringifyContent(content: unknown): string {
   return jsonPretty(content);
 }
 
+/** Pretty-print a value as 2-space JSON, falling back to `String(value)` if it is not serializable. */
 function jsonPretty(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
@@ -276,6 +333,7 @@ function jsonPretty(value: unknown): string {
   }
 }
 
+/** Wrap a turn body in its `## <role>` header plus an italic timestamp line. */
 function turn(role: string, timestamp: string | undefined, body: string): string {
   return `## ${role}\n_${timestamp ?? ""}_\n\n${body}\n`;
 }
@@ -296,6 +354,15 @@ function fenced(body: string, lang = ""): string {
   return `${ticks}${lang}\n${body}\n${ticks}`;
 }
 
+/**
+ * Trim a string to at most `capBytes` UTF-8 bytes, appending a `... [truncated]`
+ * marker when it had to cut. Slices by characters (never mid-byte) so the result
+ * is always valid UTF-8.
+ *
+ * @param s - The text to cap.
+ * @param capBytes - Maximum allowed UTF-8 byte length before truncation.
+ * @returns The (possibly trimmed) body and whether truncation occurred.
+ */
 function truncateBytes(s: string, capBytes: number): { body: string; truncated: boolean } {
   if (Buffer.byteLength(s, "utf8") <= capBytes) return { body: s, truncated: false };
   // Slice by chars until under cap, then append a marker.
@@ -306,6 +373,7 @@ function truncateBytes(s: string, capBytes: number): { body: string; truncated: 
   return { body: body + "\n... [truncated]", truncated: true };
 }
 
+/** Build the `README.md` body: a metadata header summarizing the session and render settings. */
 function buildReadme(
   session: ParsedSession,
   messageCount: number,

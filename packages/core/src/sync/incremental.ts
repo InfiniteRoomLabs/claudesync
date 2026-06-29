@@ -9,9 +9,16 @@ import { materializeConversation, type ExportFormat } from "./materialize.js";
 
 export type { ExportFormat };
 
+/**
+ * Caller-supplied knobs for {@link syncConversation}: output format, git author
+ * identity, the three skip strategies, and the files-mode preserve list.
+ */
 export interface SyncConversationOptions {
+  /** On-disk layout to produce: a git repo, a flat file tree, or one JSON blob. */
   format: ExportFormat;
+  /** Author name stamped on git commits and exported metadata. */
   authorName: string;
+  /** Author email stamped on git commits and exported metadata. */
   authorEmail: string;
   /** Skip download entirely if list metadata matches stored state. */
   skipSame?: boolean;
@@ -29,18 +36,32 @@ export interface SyncConversationOptions {
   preserve?: string[];
 }
 
+/** Outcome of one {@link syncConversation} call: what happened and why. */
 export interface SyncConversationResult {
+  /**
+   * What the sync did. `skipped` means --skip-same matched stored state;
+   * `skipped-existing` means --skip-existing found the output already on disk;
+   * `full` is a first-time write; `incremental` is a re-sync over prior state.
+   */
   action: "skipped" | "skipped-existing" | "full" | "incremental";
+  /** Human-readable explanation for a skip; unset for full/incremental writes. */
   reason?: string;
+  /** True when a CHANGELOG.md section was appended this run. */
   changelogWritten: boolean;
   /** Human-readable label (falls back to `<unnamed <uuid>>` for nameless conversations). */
   displayName: string;
 }
 
 /**
- * Cheap predicate for --skip-same. Returns true when the list-endpoint summary
- * matches what the sidecar state file recorded on the previous sync. Caller
- * should still write a state file even when this returns false (bootstrap).
+ * Cheap predicate for --skip-same: true when the conversation looks unchanged
+ * since the last sync, judged only from the list-endpoint summary (no message
+ * fetch). Compares `updated_at` and the current leaf message uuid against what
+ * the sidecar state recorded. A missing `prevState` (never synced) is never a
+ * match, so the first sync always proceeds and writes a state file.
+ *
+ * @param summary - List-endpoint fields for the conversation being checked.
+ * @param prevState - State recorded by the previous sync, or undefined if none.
+ * @returns True when both `updated_at` and leaf uuid match the prior state.
  */
 export function isSameByListMetadata(
   summary: Pick<ConversationSummary, "updated_at" | "current_leaf_message_uuid">,
@@ -61,6 +82,13 @@ export function isSameByListMetadata(
  *
  * outputPath should be the conversation's directory (for files/git) or the
  * directory that will hold `<slug>.json` (for json mode).
+ *
+ * @param client - Authenticated claude.ai client used to fetch the conversation.
+ * @param orgId - Organization uuid that owns the conversation.
+ * @param summary - List-endpoint summary, used for skip decisions and labeling.
+ * @param outputPath - Conversation directory (files/git) or json sidecar dir.
+ * @param options - Format, author identity, skip flags, and preserve globs.
+ * @returns Metadata describing the action taken and whether a changelog wrote.
  */
 export async function syncConversation(
   client: ClaudeSyncClient,

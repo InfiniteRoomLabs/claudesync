@@ -2,8 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ConversationDiff } from "./diff.js";
 
+/**
+ * Name of the human-readable sync log written into each conversation
+ * directory. Treated as an always-preserve file by {@link writeTreeWithPreserve}
+ * so it accumulates history across re-syncs rather than being overwritten.
+ */
 export const CHANGELOG_FILENAME = "CHANGELOG.md";
 
+/** Fixed header prepended when a CHANGELOG.md is first created. */
 const CHANGELOG_HEADER = [
   "# Changelog",
   "",
@@ -12,10 +18,17 @@ const CHANGELOG_HEADER = [
 ].join("\n");
 
 /**
- * Renders a single dated section for a sync diff. Returns an empty string if
- * there is nothing to record. Caller is expected to gate isUnchanged.
+ * Renders a single dated Markdown section describing one sync's diff. Initial
+ * syncs produce an "Initial export" summary; subsequent syncs produce Added/
+ * Changed/Removed subsections covering branches, artifacts, rename, and model
+ * change.
  *
- * Date is taken as the UTC date (YYYY-MM-DD) of `at`.
+ * @param diff - The diff to render. Callers should gate on
+ * {@link ConversationDiff.isUnchanged} before calling; for an unchanged diff
+ * this still returns "".
+ * @param at - Timestamp whose UTC date (YYYY-MM-DD) heads the section.
+ * @returns The section text (with trailing newline), or "" when the diff
+ * records no reportable change.
  */
 export function renderChangelogSection(
   diff: ConversationDiff,
@@ -112,12 +125,16 @@ export function renderChangelogSection(
 }
 
 /**
- * Appends a section to CHANGELOG.md inside `dir`, creating the file (with
- * header) if missing. Newest entries go directly after the header so the file
- * reads newest-first. If a section for the same date already exists, the new
- * entries are inserted at the top of that date's section.
+ * Appends a rendered section to {@link CHANGELOG_FILENAME} inside `dir`,
+ * creating the file (with {@link CHANGELOG_HEADER}) if missing. New entries are
+ * inserted directly after the header so the file reads newest-first. If a
+ * section for the same date already exists, the two bodies are merged under a
+ * single date heading rather than stacking duplicate `## YYYY-MM-DD` headings.
  *
- * Returns true if the file was modified, false if section was empty.
+ * @param dir - Conversation directory to write the changelog into.
+ * @param section - A section produced by {@link renderChangelogSection}. An
+ * empty or whitespace-only section is a no-op.
+ * @returns True if the file was written, false if `section` was empty.
  */
 export function appendChangelog(dir: string, section: string): boolean {
   if (!section.trim()) return false;
@@ -161,6 +178,7 @@ export function appendChangelog(dir: string, section: string): boolean {
   return true;
 }
 
+/** Returns the final POSIX path segment of `p` (its basename), or `p` itself if it has none. */
 function basenameOf(p: string): string {
   const parts = p.split("/");
   return parts[parts.length - 1] || p;

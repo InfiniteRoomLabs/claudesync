@@ -28,48 +28,71 @@ import type {
 
 // --- normalized model -----------------------------------------------------
 
+/** One unit of content within a turn: plain text, model thinking, or a tool call with its result. */
 export type NormalizedBlock =
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
   | {
       kind: "tool";
+      /** Tool name (e.g. `Bash`, `Read`). */
       name: string;
+      /** Provider tool-use id, when the source records one. */
       id?: string;
+      /** Tool input; rendered as pretty JSON (or passed through if already a string). */
       input?: unknown;
+      /** Tool result text, when available. */
       output?: string;
+      /** Whether `output` is an error result. */
       isError?: boolean;
     };
 
+/** One human or assistant turn: an ordered list of {@link NormalizedBlock}s. */
 export interface NormalizedTurn {
+  /** Who produced the turn. */
   role: "human" | "assistant";
+  /** ISO timestamp of the turn, when the source records one. */
   timestamp?: string;
+  /** The turn's content blocks, in order. */
   blocks: NormalizedBlock[];
 }
 
+/** A whole agent session in the shared normalized model: metadata plus ordered turns. */
 export interface NormalizedSession {
+  /** Stable session id. */
   id: string;
+  /** Session title, or null when the source has none. */
   title: string | null;
+  /** Model id, or null when unknown. */
   model: string | null;
+  /** ISO creation timestamp. */
   createdAt: string;
+  /** ISO last-updated timestamp. */
   updatedAt: string;
   /** A project path or name; its basename drives the project slug. */
   project: string;
   /** Stable id of the last turn (for --skip-same). Falls back to the session id. */
   leafUuid: string | null;
+  /** Ordered conversation turns. */
   turns: NormalizedTurn[];
 }
 
 /** Lightweight per-session metadata for listing/grouping (no full parse). */
 export interface AdapterListItem {
+  /** Stable session id. */
   id: string;
+  /** Session title, or null. */
   title: string | null;
+  /** Project path or name; its basename drives the project slug. */
   project: string;
+  /** ISO last-updated timestamp. */
   updatedAt: string;
+  /** Stable id of the last turn, or null. */
   leafUuid: string | null;
 }
 
 /** A provider's format -> normalized model. The only per-provider code needed. */
 export interface DatastoreAdapter {
+  /** URI scheme this adapter answers for (e.g. `cc`, `aider`). */
   readonly scheme: string;
   /** Enumerate sessions (cheap metadata only). */
   list(): AdapterListItem[];
@@ -77,9 +100,20 @@ export interface DatastoreAdapter {
   read(id: string): NormalizedSession;
 }
 
+/**
+ * How much tool I/O to inline when rendering.
+ *
+ * - `"compact"` - drop thinking blocks; spill every tool's I/O to a `tool-outputs/`
+ *   file and inline only a link.
+ * - `"truncated"` - inline tool output up to {@link DatastoreSourceOptions.truncateCapBytes},
+ *   spilling the overflow to a file.
+ * - `"full"` - inline everything; never spill.
+ */
 export type DatastoreFidelity = "compact" | "truncated" | "full";
 
+/** Options for {@link renderNormalized} and {@link DatastoreSource}. */
 export interface DatastoreSourceOptions {
+  /** Rendering detail level. Defaults to `compact`. */
   fidelity?: DatastoreFidelity;
   /** Inline byte cap for a single tool output in `truncated` mode. Default 20KB. */
   truncateCapBytes?: number;
@@ -89,11 +123,23 @@ export interface DatastoreSourceOptions {
 
 const DEFAULT_TRUNCATE_CAP_BYTES = 20 * 1024;
 
+/** Output of {@link renderNormalized}: the rendered file map plus rendered-turn count. */
 interface RenderedTree {
+  /** `relPath -> content` for every file in the rendered tree. */
   files: Map<string, string>;
+  /** Number of non-empty turns rendered (drives the state's last message index). */
   messageCount: number;
 }
 
+/**
+ * Render a normalized session to the greppable `cc://`-style tree: `conversation.md`,
+ * `README.md`, and one `tool-outputs/` file per externalized tool I/O. Empty turns
+ * (e.g. thinking-only assistant turns in compact mode) are dropped, not counted.
+ *
+ * @param session - The parsed session to render.
+ * @param opts - Fidelity and truncation settings; fidelity defaults to `compact`.
+ * @returns The rendered file map and the count of non-empty turns rendered.
+ */
 export function renderNormalized(
   session: NormalizedSession,
   opts: DatastoreSourceOptions = {}
@@ -119,6 +165,18 @@ export function renderNormalized(
   return { files, messageCount: rendered };
 }
 
+/**
+ * Render one turn's blocks to markdown. Text is emitted verbatim; thinking is
+ * dropped in `compact` mode and labeled otherwise; tool blocks defer to
+ * {@link renderTool}. Returns `""` for a turn with no visible content.
+ *
+ * @param turn - The turn whose blocks are rendered.
+ * @param fidelity - How much detail to emit.
+ * @param cap - Inline byte cap for tool output in `truncated` mode.
+ * @param files - Accumulator that externalized tool files are spilled into.
+ * @param nextSeq - Monotonic counter used to name externalized files.
+ * @returns The turn body as markdown, or `""` if nothing was rendered.
+ */
 function renderTurn(
   turn: NormalizedTurn,
   fidelity: DatastoreFidelity,
@@ -141,6 +199,18 @@ function renderTurn(
   return parts.filter(Boolean).join("\n\n");
 }
 
+/**
+ * Render a single tool block. In `compact` mode the full I/O is always spilled to
+ * a `tool-outputs/` file and only a link is inlined; in `truncated` mode output
+ * over `cap` bytes is spilled; in `full` mode everything is inlined.
+ *
+ * @param block - The tool block to render.
+ * @param fidelity - How much I/O to inline vs. externalize.
+ * @param cap - Inline byte cap for output in `truncated` mode.
+ * @param files - Accumulator the externalized file is added to.
+ * @param nextSeq - Monotonic counter used to name the externalized file.
+ * @returns The inline markdown for the block (a link, or fenced I/O).
+ */
 function renderTool(
   block: Extract<NormalizedBlock, { kind: "tool" }>,
   fidelity: DatastoreFidelity,
@@ -177,12 +247,33 @@ function renderTool(
   return lines.join("\n");
 }
 
+/**
+ * Build the collision-safe relative path for an externalized tool file:
+ * `tool-outputs/{seq}-{slug}-{shortId}.md`. The sequence number is zero-padded to
+ * 4 digits and the provider id prefix (`toolu_`/`call_`/`prt_`) is stripped before
+ * taking the first 8 chars (falling back to `noid`).
+ *
+ * @param seq - Monotonic sequence number, zero-padded to 4 digits.
+ * @param name - Tool name; slugified for the path.
+ * @param id - Tool-use id; prefix-stripped and truncated to 8 chars.
+ * @returns The relative `tool-outputs/...md` path.
+ */
 function externalFilePath(seq: number, name: string, id: string): string {
   const num = String(seq).padStart(4, "0");
   const shortId = id.replace(/^(toolu_|call_|prt_)/, "").slice(0, 8) || "noid";
   return `tool-outputs/${num}-${slugify(name) || "tool"}-${shortId}.md`;
 }
 
+/**
+ * Format the body of an externalized tool file: a header plus fenced Input and
+ * Output sections (each shown as `(none)` when empty).
+ *
+ * @param name - Tool name.
+ * @param id - Tool-use id.
+ * @param input - Pre-stringified tool input.
+ * @param output - Tool output (already error-prefixed if applicable).
+ * @returns The full markdown file body.
+ */
 function toolFileBody(name: string, id: string, input: string, output: string): string {
   return [
     `# Tool: ${name}`,
@@ -197,6 +288,15 @@ function toolFileBody(name: string, id: string, input: string, output: string): 
   ].join("\n");
 }
 
+/**
+ * Build the per-session `README.md`: a title plus a metadata block (id, project,
+ * model, timestamps, message count, fidelity).
+ *
+ * @param session - Source of the metadata.
+ * @param messageCount - Rendered-turn count, as returned by {@link renderNormalized}.
+ * @param fidelity - The fidelity the session was rendered at.
+ * @returns The `README.md` contents.
+ */
 function buildReadme(
   session: NormalizedSession,
   messageCount: number,
@@ -222,17 +322,34 @@ function buildReadme(
 
 // --- the generic source surface -------------------------------------------
 
+/** An {@link AdapterListItem} with its computed, collision-safe output path. */
 interface PlannedItem extends AdapterListItem {
+  /** Output path relative to the sink base: `<scheme>/<project>/<session>`. */
   relPath: string;
 }
 
+/**
+ * A read-only {@link SourceSurface} over any {@link DatastoreAdapter}: lists the
+ * adapter's sessions (grouped by project into collision-safe output paths) and
+ * reads each into the shared rendered tree via {@link renderNormalized}.
+ */
 export class DatastoreSource implements SourceSurface {
+  /** This source's endpoint, e.g. `cc://local/`. */
   readonly uri: ParsedUri;
+
+  /** Read-only: this surface lists and reads, never writes or deletes. */
   readonly caps: SurfaceCaps = { read: true, write: false, delete: false, list: true };
 
+  /** Planned items indexed by session id, populated lazily by {@link plan}. */
   private readonly byId = new Map<string, PlannedItem>();
+  /** Memoized plan; computed once on first {@link list}/{@link read}. */
   private planned?: PlannedItem[];
 
+  /**
+   * @param adapter - Provider that supplies the format -> normalized-model mapping.
+   * @param options - Rendering options forwarded to {@link renderNormalized}.
+   * @param uri - Endpoint to advertise; defaults to `<scheme>://local/`.
+   */
   constructor(
     private readonly adapter: DatastoreAdapter,
     private readonly options: DatastoreSourceOptions = {},
@@ -241,6 +358,13 @@ export class DatastoreSource implements SourceSurface {
     this.uri = uri ?? { scheme: adapter.scheme, host: "local", path: "/", query: {} };
   }
 
+  /**
+   * Enumerate sessions as {@link ItemRef}s, optionally narrowed to a single
+   * session id via `selector.conversationId`.
+   *
+   * @param selector - Optional filter restricting which sessions are yielded.
+   * @returns Lazily-produced references to each matching session.
+   */
   async *list(selector?: Selector): AsyncIterable<ItemRef> {
     for (const p of this.plan()) {
       if (selector?.conversationId && p.id !== selector.conversationId) continue;
@@ -248,6 +372,13 @@ export class DatastoreSource implements SourceSurface {
     }
   }
 
+  /**
+   * Fully parse and render the session named by `ref` into a tree {@link CanonicalItem}.
+   *
+   * @param ref - Reference (typically from {@link list}) to read.
+   * @returns The canonical item carrying the rendered `tree`.
+   * @throws If no planned session matches `ref.id`.
+   */
   async read(ref: ItemRef): Promise<CanonicalItem> {
     if (!this.byId.has(ref.id)) this.plan();
     const p = this.byId.get(ref.id);
@@ -288,6 +419,7 @@ export class DatastoreSource implements SourceSurface {
     return planned;
   }
 
+  /** Project a planned session into the public {@link ItemRef} shape. */
   private toRef(p: PlannedItem): ItemRef {
     return {
       id: p.id,
@@ -308,6 +440,15 @@ function projectSlug(project: string): string {
   return slugify(base) || "root";
 }
 
+/**
+ * Build the sink {@link SyncState} for a freshly rendered session. Local datastore
+ * reads are always full syncs (no incremental diffing), so `last_sync_action` is
+ * `"full"` and the single leaf records `messageCount` as its last message index.
+ *
+ * @param session - The session that was rendered.
+ * @param messageCount - Rendered-turn count from {@link renderNormalized}.
+ * @returns The state to persist alongside the tree.
+ */
 function makeState(session: NormalizedSession, messageCount: number): SyncState {
   const leaf = session.leafUuid ?? session.id;
   return {
@@ -324,6 +465,7 @@ function makeState(session: NormalizedSession, messageCount: number): SyncState 
   };
 }
 
+/** Pretty-print a value as 2-space JSON; pass strings through unchanged; never throw. */
 function jsonPretty(value: unknown): string {
   try {
     return typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -348,6 +490,14 @@ function fenced(body: string, lang = ""): string {
   return `${ticks}${lang}\n${body}\n${ticks}`;
 }
 
+/**
+ * Truncate a string to at most `capBytes` UTF-8 bytes on a character boundary,
+ * appending a `... [truncated]` marker when it cuts.
+ *
+ * @param s - The string to bound.
+ * @param capBytes - Maximum UTF-8 byte length.
+ * @returns The possibly-truncated body and whether truncation occurred.
+ */
 function truncateBytes(s: string, capBytes: number): { body: string; truncated: boolean } {
   if (Buffer.byteLength(s, "utf8") <= capBytes) return { body: s, truncated: false };
   let body = s.slice(0, capBytes);
