@@ -16,6 +16,10 @@ ClaudeSync is a TypeScript/Node.js SDK wrapping the undocumented claude.ai web A
 
 **Read `docs/PRD.md` first.** Then `docs/spike-results/findings.md` for ground-truth API data.
 
+## Related Ideas (ideas repo)
+
+- **Idea 099 -- Atomic, auditable, idempotent, transactional core actions**: every claudesync action (export, write, git-commit, sync) should either fully complete or cleanly roll back (atomic/transactional), leave an auditable trail of exactly what changed, and be a no-op on unchanged inputs (idempotent). Captured at `../ideas/ideas/099-claudesync-atomic-auditable-idempotent-transactional-core-actions.md` (InfiniteRoomLabs/ideas, idea 099).
+
 ## Architecture
 
 Three-layer design:
@@ -66,6 +70,22 @@ Phase 1 deliverables: Core SDK + MCP Server (3 tools: list_orgs, list_convos, ge
 - Module resolution: `NodeNext` (requires `.js` extensions on imports)
 - Zod schemas for all API response types
 - Tests with Vitest using synthetic fixtures (no real PII)
+
+### Documentation (TSDoc) -- MANDATORY
+**Full TSDoc coverage on every TypeScript declaration we write, down to the smallest
+detail -- matching the standard already set in `packages/core/src`.** This applies to
+you AND any subagents you dispatch; pass this requirement into their prompts.
+
+- A `/** */` on EVERY declaration AND every member: interfaces/types/classes/
+  functions/enums/consts, and each field/method/enum-member/parameter-bag property
+  gets its own comment. No undocumented exports, and no undocumented internals either.
+- TSDoc, not classic JSDoc: NO `{Type}` annotations (the signature has the type), NO
+  `@property`/`@interface`/`@typedef`/`@extends`. Use `@param name - desc`, `@returns`,
+  `@throws`, and `{@link Symbol}` cross-references.
+- Lead with substance (what it IS + any non-obvious invariant), not filler. Document
+  WHY where the code does not say it.
+- New code is not "done" until its TSDoc is complete; treat missing or low-quality docs as a
+  failing review. The `/tsdoc` skill (agency:tsdoc) is the canonical reference.
 
 ### Security
 - Never commit `.env` files or session cookies
