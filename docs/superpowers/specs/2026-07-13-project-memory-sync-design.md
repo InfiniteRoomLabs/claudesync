@@ -183,6 +183,7 @@ Memory is the most sensitive data ClaudeSync touches (legal names, medical, empl
 - Memory/instruction content never appears in progress output, errors, journals, changelogs, debug logs, telemetry, or crash reports; never sent to another model for diffing.
 - Fixtures synthetic only; spike captures redacted before commit.
 - Principal mismatch fails closed. Existing cookie hygiene (clear `CLAUDE_AI_COOKIE` after read) unchanged.
+  - **Phase 1 limitation:** the principal fingerprint is currently derived from the **organization id**, not a per-user account id (the SDK's `AuthProvider` exposes only `getOrganizationId()`). For a single-member org this is 1:1 with the user, but two members of the same org would share a fingerprint, so the guard does not distinguish users within an org. Phase 2 upgrade: add a `getAccount()` client method over the existing `/api/account` endpoint and key the fingerprint on the account uuid.
 
 ## 9. Phasing
 
