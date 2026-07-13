@@ -50,8 +50,10 @@ export interface MemoryPullOutcome {
    */
   memoryChanged: boolean;
   /**
-   * Number of entries in `remote.controls` at the time of this pull (0 if
-   * `remote.controls` is null, e.g. on a `"no-memory"` outcome).
+   * Number of edit-control entries that actually land in `edits.md` -- i.e.
+   * `remote.controls` after {@link serializeEdits}/{@link parseEdits}
+   * normalization drops blank/whitespace-only entries (0 if `remote.controls`
+   * is null, e.g. on a `"no-memory"` outcome).
    */
   controlsCount: number;
 }
@@ -202,11 +204,18 @@ export function pullProjectMemory(opts: PullProjectMemoryOptions): MemoryPullOut
     );
   }
 
-  const controls = remote.controls ?? [];
   const canonicalMemory = canonicalize(remote.memory);
   const memoryHash = hashContent(canonicalMemory);
-  const controlHashes = controls.map((c) => hashContent(c));
-  const editsFileText = serializeEdits(controls);
+  // Single source of truth for the edit list: serialize once, then derive the
+  // stored per-entry base hashes from the SAME parsed-back form the read-back
+  // dirty-check uses (parseEdits trims each entry and drops blanks). Hashing
+  // the raw `remote.controls` here would mismatch the read-time recomputation
+  // whenever an entry has surrounding whitespace or is blank, breaking
+  // idempotency and producing false conflicts.
+  const editsFileText = serializeEdits(remote.controls ?? []);
+  const normalizedControls = parseEdits(editsFileText);
+  const controlHashes = normalizedControls.map((c) => hashContent(c));
+  const controlsCount = normalizedControls.length;
   const snapshot = snapshotHash(memoryHash, controlHashes);
 
   const localMemoryText = readIfExists(memoryPath);
@@ -223,7 +232,7 @@ export function pullProjectMemory(opts: PullProjectMemoryOptions): MemoryPullOut
       localEditsText === undefined ||
       hashArraysEqual(parseEdits(localEditsText).map((c) => hashContent(c)), prior.controls_base);
     if (memoryClean && editsClean) {
-      return { action: "unchanged", memoryChanged: false, controlsCount: controls.length };
+      return { action: "unchanged", memoryChanged: false, controlsCount };
     }
   }
 
@@ -234,7 +243,7 @@ export function pullProjectMemory(opts: PullProjectMemoryOptions): MemoryPullOut
       localEditsText !== undefined &&
       !hashArraysEqual(parseEdits(localEditsText).map((c) => hashContent(c)), prior.controls_base);
     if (memoryDirty || editsDirty) {
-      return { action: "conflict", memoryChanged: false, controlsCount: controls.length };
+      return { action: "conflict", memoryChanged: false, controlsCount };
     }
   }
 
@@ -256,5 +265,5 @@ export function pullProjectMemory(opts: PullProjectMemoryOptions): MemoryPullOut
   };
   writeMemoryState(dir, newState);
 
-  return { action: "written", memoryChanged, controlsCount: controls.length };
+  return { action: "written", memoryChanged, controlsCount };
 }

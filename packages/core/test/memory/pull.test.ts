@@ -44,6 +44,24 @@ describe("pullProjectMemory", () => {
     expect(fs.statSync(path.join(d, "MEMORY.md")).mtimeMs).toBe(mtime1);
   });
 
+  it("idempotent even when a control entry has surrounding whitespace", () => {
+    const d = mkdir();
+    const r = remote("**Memory**\n", ["  Prefer rye.  ", "Open 6am."]);
+    pullProjectMemory({ ...base, dir: d, remote: r });
+    const mtime1 = fs.statSync(path.join(d, "MEMORY.md")).mtimeMs;
+    const out = pullProjectMemory({ ...base, dir: d, remote: r });
+    expect(out.action).toBe("unchanged");
+    expect(fs.statSync(path.join(d, "MEMORY.md")).mtimeMs).toBe(mtime1);
+  });
+
+  it("no false conflict: whitespace-only control noise, clean edits, changed memory rewrites", () => {
+    const d = mkdir();
+    pullProjectMemory({ ...base, dir: d, remote: remote("v1\n", ["  a  "]) });
+    const out = pullProjectMemory({ ...base, dir: d, remote: remote("v2\n", ["  a  "], "2026-07-13T07:00:00Z") });
+    expect(out.action).toBe("written");
+    expect(fs.readFileSync(path.join(d, "MEMORY.md"), "utf-8")).toBe("v2\n");
+  });
+
   it("nightly regen: changed remote memory rewrites the doc", () => {
     const d = mkdir();
     pullProjectMemory({ ...base, dir: d, remote: remote("v1\n", ["a"]) });
