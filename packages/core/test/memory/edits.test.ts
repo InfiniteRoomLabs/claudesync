@@ -3,7 +3,7 @@ import { canonicalize, serializeEdits, parseEdits } from "@core/memory/edits.js"
 
 describe("canonicalize", () => {
   it("strips BOM, normalizes newlines, ends with exactly one newline", () => {
-    expect(canonicalize("﻿a\r\nb\r\n\n\n")).toBe("a\nb\n");
+    expect(canonicalize("\uFEFFa\r\nb\r\n\n\n")).toBe("a\nb\n");
     expect(canonicalize("no newline")).toBe("no newline\n");
     expect(canonicalize("")).toBe("");
   });

@@ -173,6 +173,7 @@ export {
   computePrincipalFingerprint,
 } from "./memory/pull.js";
 export type { MemoryPullOutcome } from "./memory/pull.js";
+export type { PullProjectMemoryOptions } from "./memory/pull.js";
 export { readMemoryState, writeMemoryState, MEMORY_STATE_FILENAME } from "./memory/state.js";
 export type { MemoryState } from "./memory/state.js";
 export { canonicalize, serializeEdits, parseEdits } from "./memory/edits.js";

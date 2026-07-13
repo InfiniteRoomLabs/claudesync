@@ -62,7 +62,8 @@ export function readMemoryState(dir: string): MemoryState | undefined {
  * @param state - State to persist as pretty-printed JSON.
  */
 export function writeMemoryState(dir: string, state: MemoryState): void {
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
   const filePath = path.join(dir, MEMORY_STATE_FILENAME);
   const tmpPath = filePath + ".tmp";
   fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });

@@ -96,4 +96,42 @@ describe("pullProjectMemory", () => {
     expect(out.action).toBe("written");
     expect(fs.readFileSync(path.join(d, "MEMORY.md"), "utf-8")).toBe("v2\n");
   });
+
+  it("conflict when MEMORY.md locally edited and remote UNCHANGED (no force)", () => {
+    const d = mkdir();
+    const r = remote("v1\n", ["a"]);
+    pullProjectMemory({ ...base, dir: d, remote: r });
+    fs.writeFileSync(path.join(d, "MEMORY.md"), "hand\n", "utf-8");
+    const out = pullProjectMemory({ ...base, dir: d, remote: r });
+    expect(out.action).toBe("conflict");
+    expect(fs.readFileSync(path.join(d, "MEMORY.md"), "utf-8")).toBe("hand\n");
+  });
+
+  it("conflict when edits.md locally edited and remote unchanged (no force)", () => {
+    const d = mkdir();
+    const r = remote("v1\n", ["a"]);
+    pullProjectMemory({ ...base, dir: d, remote: r });
+    fs.writeFileSync(path.join(d, "edits.md"), "locally added\n---\na\n", "utf-8");
+    const out = pullProjectMemory({ ...base, dir: d, remote: r });
+    expect(out.action).toBe("conflict");
+    expect(fs.readFileSync(path.join(d, "edits.md"), "utf-8")).toBe("locally added\n---\na\n");
+  });
+
+  it("no prior sidecar + pre-existing differing MEMORY.md = conflict", () => {
+    const d = mkdir();
+    fs.writeFileSync(path.join(d, "MEMORY.md"), "preexisting\n", "utf-8");
+    const out = pullProjectMemory({ ...base, dir: d, remote: remote("v1\n", ["a"]) });
+    expect(out.action).toBe("conflict");
+    expect(fs.readFileSync(path.join(d, "MEMORY.md"), "utf-8")).toBe("preexisting\n");
+  });
+
+  it("force overrides an unchanged-remote local edit", () => {
+    const d = mkdir();
+    const r = remote("v1\n", ["a"]);
+    pullProjectMemory({ ...base, dir: d, remote: r });
+    fs.writeFileSync(path.join(d, "MEMORY.md"), "hand\n", "utf-8");
+    const out = pullProjectMemory({ ...base, dir: d, force: true, remote: r });
+    expect(out.action).toBe("written");
+    expect(fs.readFileSync(path.join(d, "MEMORY.md"), "utf-8")).toBe("v1\n");
+  });
 });

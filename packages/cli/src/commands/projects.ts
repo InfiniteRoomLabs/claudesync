@@ -281,6 +281,9 @@ memoryCommand
     // fingerprint input passed to pullProjectMemory. `status` below MUST
     // derive accountId the same way (resolveOrgId, no other transform) so
     // the fingerprints recorded in the sidecar line up across commands.
+    // Phase 1 uses the org id as the principal (single-member-org
+    // assumption); a per-user account id from /api/account is a Phase 2
+    // upgrade.
     const outcome = pullProjectMemory({
       remote,
       accountId: orgId,
@@ -361,6 +364,8 @@ function describeMemoryStatus(dir: string, accountId: string): string {
     return "no local pull";
   }
 
+  // Phase 1 uses the org id as the principal (single-member-org assumption);
+  // a per-user account id from /api/account is a Phase 2 upgrade.
   const principalFingerprint = computePrincipalFingerprint(accountId);
   if (prior.principal_fingerprint !== principalFingerprint) {
     return (

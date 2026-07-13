@@ -170,13 +170,25 @@ function hashArraysEqual(a: string[], b: string[]): boolean {
  *    nothing written.
  * 2. A prior sidecar with a different `principal_fingerprint` -> throws,
  *    unless `force` is set.
- * 3. No prior sidecar -> initial write (`"written"`).
- * 4. Prior sidecar whose `remote_snapshot_sha256` matches the freshly
- *    computed snapshot AND neither local file is dirty relative to its base
- *    -> `"unchanged"`, nothing written (not even the sidecar).
- * 5. Remote snapshot changed and (without `force`) either local file is
- *    dirty relative to its base -> `"conflict"`, nothing written.
- * 6. Otherwise -> write both files and the sidecar (`"written"`).
+ * 3. A prior sidecar exists:
+ *    a. Remote snapshot unchanged AND neither local file is dirty relative
+ *       to its recorded base -> `"unchanged"`, nothing written (not even
+ *       the sidecar).
+ *    b. Either local file is dirty relative to its base -- regardless of
+ *       whether the remote moved -- and `force` is not set -> `"conflict"`,
+ *       nothing written. This also covers a dirty local file under an
+ *       unchanged remote (e.g. re-pulling after hand-editing the mirror),
+ *       which is otherwise indistinguishable from case (a) unless dirtiness
+ *       is checked unconditionally.
+ *    c. Otherwise (remote changed and local is clean, or `force` is set)
+ *       -> fall through to write.
+ * 4. No prior sidecar (first pull into this directory):
+ *    a. `MEMORY.md` or `edits.md` already exists locally and differs from
+ *       what would be written, and `force` is not set -> `"conflict"`,
+ *       nothing written -- there is no recorded base to reconcile a
+ *       pre-existing file against, so it is never silently overwritten.
+ *    b. Otherwise -> fall through to write.
+ * 5. Write `MEMORY.md`, `edits.md`, and the sidecar -> `"written"`.
  *
  * @param opts - See {@link PullProjectMemoryOptions}.
  * @returns The {@link MemoryPullOutcome} describing what happened.
@@ -223,31 +235,44 @@ export function pullProjectMemory(opts: PullProjectMemoryOptions): MemoryPullOut
 
   const remoteChanged = prior === undefined || prior.remote_snapshot_sha256 !== snapshot;
 
-  if (prior !== undefined && !remoteChanged) {
-    // Remote is identical to the last pull, so the base to compare local
-    // files against is equivalently `remote`/`prior` (they match).
-    const memoryClean =
-      localMemoryText === undefined || hashContent(canonicalize(localMemoryText)) === prior.memory_content_sha256;
-    const editsClean =
-      localEditsText === undefined ||
-      hashArraysEqual(parseEdits(localEditsText).map((c) => hashContent(c)), prior.controls_base);
-    if (memoryClean && editsClean) {
-      return { action: "unchanged", memoryChanged: false, controlsCount };
-    }
-  }
-
-  if (prior !== undefined && remoteChanged && !force) {
+  if (prior !== undefined) {
+    // A prior sidecar exists: local-dirty detection is independent of
+    // whether the remote moved, so a hand-edit sitting under an unchanged
+    // remote is still caught (previously this branch only ran when
+    // `remoteChanged` was true, so a dirty local file under an unchanged
+    // remote fell through to the unconditional write below and was
+    // silently overwritten).
     const memoryDirty =
       localMemoryText !== undefined && hashContent(canonicalize(localMemoryText)) !== prior.memory_content_sha256;
     const editsDirty =
       localEditsText !== undefined &&
       !hashArraysEqual(parseEdits(localEditsText).map((c) => hashContent(c)), prior.controls_base);
-    if (memoryDirty || editsDirty) {
+    if (!remoteChanged && !memoryDirty && !editsDirty) {
+      return { action: "unchanged", memoryChanged: false, controlsCount };
+    }
+    if ((memoryDirty || editsDirty) && !force) {
       return { action: "conflict", memoryChanged: false, controlsCount };
     }
+    // Else: remote changed and local is clean (a normal pull), or force is
+    // set -- fall through to the write below.
+  } else {
+    // No prior sidecar (initial pull for this directory). If a local file
+    // already exists and differs from what we're about to write, we have no
+    // recorded base to reconcile it against -- treat it as an unrecoverable
+    // conflict rather than silently overwriting a reused/manually-copied
+    // directory (previously this case had no guard at all).
+    const memoryPreexists =
+      localMemoryText !== undefined && hashContent(canonicalize(localMemoryText)) !== memoryHash;
+    const editsPreexists =
+      localEditsText !== undefined && !hashArraysEqual(parseEdits(localEditsText).map((c) => hashContent(c)), controlHashes);
+    if ((memoryPreexists || editsPreexists) && !force) {
+      return { action: "conflict", memoryChanged: false, controlsCount };
+    }
+    // Else: no stray local files, or they already match what we'd write.
   }
 
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
   writeFileAtomic(memoryPath, canonicalMemory);
   writeFileAtomic(editsPath, editsFileText);
 
