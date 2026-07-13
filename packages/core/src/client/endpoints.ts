@@ -81,6 +81,15 @@ export const ENDPOINTS = {
    */
   projectConversations: (orgId: string, projectId: string) =>
     `/api/organizations/${orgId}/projects/${projectId}/conversations`,
+  /**
+   * A project's memory: the server-generated memory doc plus its `controls`
+   * edit list. Only the `project_uuid` query parameter selects the project;
+   * other names silently fall back to account-level memory (spike-confirmed).
+   * @param orgId - Organization UUID.
+   * @param projectId - Project UUID, sent as `project_uuid`.
+   */
+  memory: (orgId: string, projectId: string) =>
+    `/api/organizations/${orgId}/memory?project_uuid=${projectId}`,
 
   // Artifacts (wiggle filesystem)
 

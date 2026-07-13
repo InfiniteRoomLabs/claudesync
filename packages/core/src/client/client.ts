@@ -9,6 +9,7 @@ import {
   ArtifactListResponseSchema,
   ProjectSchema,
   ProjectDocSchema,
+  ProjectMemorySchema,
 } from "../models/schemas.js";
 import type {
   Organization,
@@ -18,6 +19,7 @@ import type {
   ArtifactListResponse,
   Project,
   ProjectDoc,
+  ProjectMemory,
 } from "../models/types.js";
 import { z } from "zod";
 import { basename } from "node:path";
@@ -321,6 +323,28 @@ export class ClaudeSyncClient {
       buildUrl(ENDPOINTS.projectConversations(orgId, projectId))
     );
     return z.array(ConversationSummarySchema).parse(data);
+  }
+
+  /**
+   * Fetch a project's memory: the generated doc and its `controls` edit list.
+   *
+   * A project whose memory has never been generated returns
+   * `{ memory: "", controls: null, updated_at: null }` -- callers treat that as
+   * "no memory yet", not an error.
+   *
+   * @param orgId - Organization UUID.
+   * @param projectId - Project UUID.
+   * @returns The validated memory payload.
+   * @throws {@link ClaudeSyncError} on request failure or schema mismatch.
+   */
+  async getProjectMemory(
+    orgId: string,
+    projectId: string
+  ): Promise<ProjectMemory> {
+    const data = await this.request(
+      buildUrl(ENDPOINTS.memory(orgId, projectId))
+    );
+    return ProjectMemorySchema.parse(data);
   }
 
   // --- Artifacts (wiggle filesystem) ---

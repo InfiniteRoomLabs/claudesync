@@ -247,3 +247,21 @@ export const ProjectDocSchema = z
     content: z.string(),
   })
   .passthrough();
+
+/**
+ * A project's memory payload from `GET .../memory?project_uuid=`. `controls` is
+ * the ordered edit-instruction list (plain strings, no server IDs); it is
+ * `null` for a project whose memory has never been generated. `memory` is the
+ * generated markdown doc ("" when ungenerated). `.passthrough()` keeps unknown
+ * fields for forward compatibility.
+ */
+export const ProjectMemorySchema = z
+  .object({
+    /** Server-generated markdown memory document; "" if never generated. */
+    memory: z.string(),
+    /** Ordered edit-instruction list; null if memory was never generated. */
+    controls: z.array(z.string()).nullable(),
+    /** ISO 8601 last-generation timestamp; null if never generated. */
+    updated_at: z.string().nullable(),
+  })
+  .passthrough();

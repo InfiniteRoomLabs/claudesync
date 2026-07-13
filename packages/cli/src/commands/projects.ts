@@ -5,6 +5,9 @@ import {
   ClaudeSyncClient,
   buildGitBundle,
   exportToGit,
+  pullProjectMemory,
+  readMemoryState,
+  computePrincipalFingerprint,
 } from "@infinite-room-labs/claudesync-core";
 import type { GitBundleCommit } from "@infinite-room-labs/claudesync-core";
 import { createClient, resolveOrgId, truncate, outputJson } from "../utils.js";
@@ -226,6 +229,153 @@ projectsCommand
       console.log(`  Conversations: ${conversations.length}`);
     }
   });
+
+// --- projects memory ---
+const memoryCommand = projectsCommand
+  .command("memory")
+  .description("View and sync a project's memory (the generated doc + edit list)");
+
+memoryCommand
+  .command("show")
+  .description("Fetch and print a project's generated memory doc")
+  .argument("<project-id>", "Project UUID")
+  .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
+  .option("--json", "Output raw memory JSON")
+  .action(async (projectId: string, options: { org?: string; json?: boolean }) => {
+    const { auth, client } = createClient();
+    const orgId = await resolveOrgId(auth, options.org);
+    const mem = await client.getProjectMemory(orgId, projectId);
+
+    if (options.json) {
+      outputJson(mem);
+      return;
+    }
+    if (mem.controls === null && mem.memory === "") {
+      console.log("This project has no generated memory yet.");
+      return;
+    }
+    console.log(mem.memory);
+    console.log(`\n  ${mem.controls?.length ?? 0} edit(s)`);
+  });
+
+memoryCommand
+  .command("pull")
+  .description("Pull a project's memory doc + edit list into a local directory")
+  .argument("<project-id>", "Project UUID")
+  .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
+  .option("--output <dir>", "Output directory (default: ./<project-id>)")
+  .option("--force", "Overwrite local changes that conflict with the remote update")
+  .action(async (
+    projectId: string,
+    options: { org?: string; output?: string; force?: boolean }
+  ) => {
+    const { auth, client } = createClient();
+    const orgId = await resolveOrgId(auth, options.org);
+    const remote = await client.getProjectMemory(orgId, projectId);
+
+    const outputDir = options.output ?? defaultMemoryOutputDir(projectId);
+    const dir = resolve(outputDir, "memory");
+
+    // The auth layer exposes only an org id (no separate account id), and it
+    // is 1:1 with the account for this tool -- reuse it as the principal
+    // fingerprint input passed to pullProjectMemory. `status` below MUST
+    // derive accountId the same way (resolveOrgId, no other transform) so
+    // the fingerprints recorded in the sidecar line up across commands.
+    // Phase 1 uses the org id as the principal (single-member-org
+    // assumption); a per-user account id from /api/account is a Phase 2
+    // upgrade.
+    const outcome = pullProjectMemory({
+      remote,
+      accountId: orgId,
+      projectId,
+      dir,
+      now: new Date().toISOString(),
+      force: options.force,
+    });
+
+    switch (outcome.action) {
+      case "no-memory":
+        console.log(
+          "This project has no generated memory yet -- chat in it and wait for the nightly generation."
+        );
+        break;
+      case "conflict":
+        console.log("Local changes conflict with the remote update. Re-run with --force to overwrite.");
+        break;
+      case "written":
+        console.log(`written: ${dir} (${outcome.controlsCount} edit(s))`);
+        break;
+      case "unchanged":
+        console.log(`unchanged: ${dir} (${outcome.controlsCount} edit(s))`);
+        break;
+    }
+  });
+
+memoryCommand
+  .command("status")
+  .description("Report whether a local memory pull is clean, stale, or missing")
+  .argument("<project-id>", "Project UUID")
+  .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
+  .option("--output <dir>", "Local directory the project was pulled into (default: ./<project-id>)")
+  .action(async (projectId: string, options: { org?: string; output?: string }) => {
+    const { auth } = createClient();
+    const orgId = await resolveOrgId(auth, options.org);
+
+    const outputDir = options.output ?? defaultMemoryOutputDir(projectId);
+    const dir = resolve(outputDir, "memory");
+
+    console.log(describeMemoryStatus(dir, orgId));
+  });
+
+/**
+ * Default local directory a `projects memory` subcommand reads from or
+ * writes into when `--output` is not given. Uses the project UUID directly
+ * (unlike `projects export`, which slugifies the project's display name) --
+ * memory commands never fetch project metadata beyond the memory doc itself.
+ *
+ * @param projectId - Project UUID.
+ * @returns `./<project-id>`.
+ */
+function defaultMemoryOutputDir(projectId: string): string {
+  return `./${projectId}`;
+}
+
+/**
+ * Reports a content-free, one-line status for a project's local memory pull.
+ *
+ * Deliberately does not replicate `pullProjectMemory`'s full read-side merge
+ * decision (remote-snapshot hashing, per-file dirty checks against the
+ * sidecar's recorded base) -- that logic depends on an unexported internal
+ * hash formula (`snapshotHash`), and reimplementing it here would duplicate
+ * pull's engine and risk silently drifting out of sync with it. Instead this
+ * makes a single network-free check the sidecar can already answer: whether
+ * a pull has ever happened, when, and whether it was made under the account
+ * currently resolved (same org-id-as-principal convention `pull` uses).
+ *
+ * @param dir - The `memory/` directory a prior `pull` would have written into.
+ * @param accountId - The resolved org id, used identically to how `pull` derives `accountId`.
+ * @returns One of: "no local pull", "local pull present but was made under a
+ * different account ..." (principal fingerprint mismatch), or "local pull
+ * present (last pulled ...); run pull to check for updates".
+ */
+function describeMemoryStatus(dir: string, accountId: string): string {
+  const prior = readMemoryState(dir);
+  if (prior === undefined) {
+    return "no local pull";
+  }
+
+  // Phase 1 uses the org id as the principal (single-member-org assumption);
+  // a per-user account id from /api/account is a Phase 2 upgrade.
+  const principalFingerprint = computePrincipalFingerprint(accountId);
+  if (prior.principal_fingerprint !== principalFingerprint) {
+    return (
+      `local pull present but was made under a different account (last pulled ${prior.last_pull_at}); ` +
+      "run pull --force to confirm and overwrite."
+    );
+  }
+
+  return `local pull present (last pulled ${prior.last_pull_at}); run pull to check for updates.`;
+}
 
 function buildProjectReadme(
   project: { name: string; uuid: string; description?: string | null; created_at: string; updated_at: string },

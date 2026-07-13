@@ -245,6 +245,39 @@ export function createServer(): McpServer {
     }
   );
 
+  // --- get_project_memory ---
+  server.tool(
+    "get_project_memory",
+    "Get a claude.ai project's memory: the server-generated memory document plus its ordered edit-instruction list (controls). Read-only.",
+    {
+      projectId: z.string().describe("The project UUID"),
+      orgId: z
+        .string()
+        .optional()
+        .describe(
+          "Organization UUID. Omit to auto-detect from session."
+        ),
+    },
+    async ({ projectId, orgId }) => {
+      return withErrorHandling(async () => {
+        const resolvedOrgId =
+          orgId ?? (await auth.getOrganizationId());
+        const mem = await client.getProjectMemory(
+          resolvedOrgId,
+          projectId
+        );
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(mem, null, 2),
+            },
+          ],
+        };
+      });
+    }
+  );
+
   // --- list_artifacts ---
   server.tool(
     "list_artifacts",

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Project memory pull (Phase 1).** New SDK `getProjectMemory` read, a
+  `packages/core/src/memory/` module (canonicalization, `edits.md`
+  serialization, hash sidecar, idempotent + atomic pull engine with a full
+  clean/dirty/conflict decision table and a principal-fingerprint guard), CLI
+  `projects memory show|pull|status`, and a read-only `get_project_memory` MCP
+  tool. Pull materializes `memory/MEMORY.md` (server-generated doc) +
+  `memory/edits.md` (the `controls` list) + an owner-only hash sidecar; local
+  hand-edits are never silently overwritten (reported as conflicts). Read-only;
+  no writes to claude.ai (Phase 2 adds push). See
+  `docs/superpowers/specs/2026-07-13-project-memory-sync-design.md`.
+
 ### Documentation
 - **Added the Phase 1 (pull) implementation plan** for project memory
   (`docs/superpowers/plans/2026-07-13-memory-pull-phase1.md`): task-by-task TDD
