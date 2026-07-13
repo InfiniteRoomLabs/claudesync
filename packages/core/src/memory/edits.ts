@@ -10,7 +10,7 @@ const DELIMITER = "---";
  * @returns The canonical form.
  */
 export function canonicalize(text: string): string {
-  const noBom = text.replace(/^﻿/, "");
+  const noBom = text.replace(/^\uFEFF/, "");
   const lf = noBom.replace(/\r\n?/g, "\n");
   const trimmed = lf.replace(/\n+$/, "");
   return trimmed === "" ? "" : trimmed + "\n";
