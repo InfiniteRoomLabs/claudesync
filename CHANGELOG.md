@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Documentation
+- **Ran the project-memory endpoint discovery spike (Phase 0)** and revised the
+  design accordingly. Findings in `docs/spike-results/memory-findings.md`: edits
+  are a single `controls` string array (no per-entry IDs), the only write is a
+  whole-array `PUT .../memory/controls` that regenerates the doc synchronously
+  (~57 s), and the memory doc is GET-only. This collapsed the push model from a
+  per-edit resumable saga to one merge-before-PUT call and removed the direct-edit
+  phase. Spec and spike plan updated (`docs/superpowers/`). Docs only.
 - **Added the project-memory sync design spec**
   (`docs/superpowers/specs/2026-07-13-project-memory-sync-design.md`):
   bidirectional sync for the new claude.ai per-project memory feature (pull the
