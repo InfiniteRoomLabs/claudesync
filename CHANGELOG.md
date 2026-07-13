@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Documentation
+- **Added the Phase 1 (pull) implementation plan** for project memory
+  (`docs/superpowers/plans/2026-07-13-memory-pull-phase1.md`): task-by-task TDD
+  plan for `getProjectMemory` + a `packages/core/src/memory/` module + CLI
+  `projects memory show|pull|status` + a read-only MCP tool. Plan only.
 - **Ran the project-memory endpoint discovery spike (Phase 0)** and revised the
   design accordingly. Findings in `docs/spike-results/memory-findings.md`: edits
   are a single `controls` string array (no per-entry IDs), the only write is a
