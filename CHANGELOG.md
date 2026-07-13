@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Documentation
+- **Added the project-memory sync design spec**
+  (`docs/superpowers/specs/2026-07-13-project-memory-sync-design.md`):
+  bidirectional sync for the new claude.ai per-project memory feature (pull the
+  server-generated memory doc, push only the user-authored edits list via an
+  outbox + compare-and-delete saga, explicit regenerate, opt-in export,
+  principal-fingerprint privacy guard). Produced by two independent plans
+  (Claude + Codex) reconciled and cross-reviewed. Design only; not yet
+  implemented.
 - **Full TSDoc coverage across the core SDK** (`packages/core/src`, 51 files).
   Every declaration and member -- exported and internal -- now carries a TSDoc
   comment (no `{type}` annotations, per-member docs, `{@link}` cross-references),
