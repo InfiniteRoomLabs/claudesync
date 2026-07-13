@@ -45,6 +45,7 @@ export {
   ArtifactListResponseSchema,
   ProjectSchema,
   ProjectDocSchema,
+  ProjectMemorySchema,
 } from "./models/schemas.js";
 
 // Models -- Types inferred from the schemas above
@@ -61,6 +62,7 @@ export type {
   ArtifactListResponse,
   Project,
   ProjectDoc,
+  ProjectMemory,
 } from "./models/types.js";
 
 // Tree utilities -- build and traverse the branching message tree

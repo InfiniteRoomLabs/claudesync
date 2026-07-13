@@ -12,6 +12,7 @@ import type {
   ArtifactListResponseSchema,
   ProjectSchema,
   ProjectDocSchema,
+  ProjectMemorySchema,
 } from "./schemas.js";
 
 /**
@@ -44,3 +45,5 @@ export type ArtifactListResponse = z.infer<typeof ArtifactListResponseSchema>;
 export type Project = z.infer<typeof ProjectSchema>;
 /** Inferred type for {@link ProjectDocSchema}. */
 export type ProjectDoc = z.infer<typeof ProjectDocSchema>;
+/** A project's memory doc + edit-control list. Inferred from {@link ProjectMemorySchema}. */
+export type ProjectMemory = z.infer<typeof ProjectMemorySchema>;
