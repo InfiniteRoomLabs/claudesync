@@ -48,6 +48,24 @@ export interface ClientOptions {
  */
 const ARTIFACT_PATH_PREFIX = "/mnt/user-data/";
 
+/**
+ * Default timeout, in milliseconds, that {@link ClaudeSyncClient.putProjectMemoryControls}
+ * waits for the synchronous memory-controls write before aborting. The server
+ * regenerates the memory doc in-request, observed to take roughly 57 seconds, so
+ * this default leaves headroom above that without waiting indefinitely.
+ */
+const DEFAULT_MEMORY_CONTROLS_TIMEOUT_MS = 90_000;
+
+/** Call-time options for {@link ClaudeSyncClient.putProjectMemoryControls}. */
+export interface PutProjectMemoryControlsOptions {
+  /**
+   * Milliseconds to wait for the write before aborting via `AbortSignal.timeout`.
+   * Must be finite and strictly positive.
+   * @defaultValue 90000
+   */
+  timeoutMs?: number;
+}
+
 /** Content types that are textual despite not starting with `text/`. */
 const TEXT_APP_CONTENT_TYPE =
   /^application\/(json|xml|javascript|x-ndjson|x-yaml|yaml)\b|^application\/[\w.+-]+\+(json|xml)\b/;
@@ -103,54 +121,34 @@ export class ClaudeSyncClient {
   }
 
   /**
-   * Issue a paced GET and return the parsed JSON body.
+   * Issue a paced `fetch` and return the raw {@link Response}, owning every
+   * cross-cutting concern shared by all HTTP calls on this client: limiter slot
+   * acquisition, auth-header injection, 429 mapping, and non-2xx mapping.
    *
-   * Acquires a limiter slot, attaches auth headers, then maps failures: 429 to a
-   * {@link RateLimitError} and any other non-2xx to a {@link ClaudeSyncError}.
-   * On success the limiter is told the request succeeded (for adaptive ramp-up).
-   *
-   * @param url - Absolute URL, typically from {@link buildUrl}.
-   * @returns The decoded JSON value (still untyped; callers validate with Zod).
-   * @throws {@link RateLimitError} on HTTP 429.
-   * @throws {@link ClaudeSyncError} on any other non-2xx response.
-   */
-  private async request(url: string): Promise<unknown> {
-    await this.limiter.acquireRequestSlot();
-
-    const headers = await this.auth.getHeaders();
-    const response = await fetch(url, { headers });
-
-    if (response.status === 429) {
-      const body = await response.json().catch(() => null);
-      throw this.parseRateLimit(body);
-    }
-
-    if (!response.ok) {
-      throw new ClaudeSyncError(
-        `API request failed: ${response.status} ${response.statusText}`,
-        response.status
-      );
-    }
-
-    this.limiter.onRequestSuccess();
-    return response.json();
-  }
-
-  /**
-   * Like {@link ClaudeSyncClient.request} but returns the raw {@link Response}
-   * instead of parsing JSON, so the caller can inspect headers and read the body
-   * as bytes. Used for artifact downloads, whose bodies may be binary.
+   * `init.headers` (if given) is layered on top of the auth headers, so a
+   * caller can add e.g. `content-type` without losing the session cookie.
+   * {@link ClaudeSyncClient.request} and {@link ClaudeSyncClient.requestRaw} are
+   * both thin wrappers over this method; every other client method funnels
+   * through one of those two, so this is the single choke point for transport
+   * behavior.
    *
    * @param url - Absolute URL, typically from {@link buildUrl}.
+   * @param init - Optional `fetch` init (method, body, headers, signal, ...).
+   * Defaults to a plain GET when omitted.
    * @returns The successful (2xx) `fetch` response, body unread.
-   * @throws {@link RateLimitError} on HTTP 429.
+   * @throws {@link RateLimitError} on HTTP 429. The limiter is notified to back
+   * off before the error is thrown.
    * @throws {@link ClaudeSyncError} on any other non-2xx response.
    */
-  private async requestRaw(url: string): Promise<Response> {
+  private async requestResponse(
+    url: string,
+    init?: RequestInit
+  ): Promise<Response> {
     await this.limiter.acquireRequestSlot();
 
-    const headers = await this.auth.getHeaders();
-    const response = await fetch(url, { headers });
+    const authHeaders = await this.auth.getHeaders();
+    const headers = { ...authHeaders, ...(init?.headers as Record<string, string> | undefined) };
+    const response = await fetch(url, { ...init, headers });
 
     if (response.status === 429) {
       const body = await response.json().catch(() => null);
@@ -166,6 +164,39 @@ export class ClaudeSyncClient {
 
     this.limiter.onRequestSuccess();
     return response;
+  }
+
+  /**
+   * Issue a paced GET and return the parsed JSON body.
+   *
+   * Thin wrapper over {@link ClaudeSyncClient.requestResponse} that parses the
+   * successful response as JSON.
+   *
+   * @param url - Absolute URL, typically from {@link buildUrl}.
+   * @returns The decoded JSON value (still untyped; callers validate with Zod).
+   * @throws {@link RateLimitError} on HTTP 429.
+   * @throws {@link ClaudeSyncError} on any other non-2xx response.
+   */
+  private async request(url: string): Promise<unknown> {
+    const response = await this.requestResponse(url);
+    return response.json();
+  }
+
+  /**
+   * Like {@link ClaudeSyncClient.request} but returns the raw {@link Response}
+   * instead of parsing JSON, so the caller can inspect headers and read the body
+   * as bytes. Used for artifact downloads, whose bodies may be binary.
+   *
+   * Thin wrapper over {@link ClaudeSyncClient.requestResponse} with no `init`,
+   * i.e. a plain GET.
+   *
+   * @param url - Absolute URL, typically from {@link buildUrl}.
+   * @returns The successful (2xx) `fetch` response, body unread.
+   * @throws {@link RateLimitError} on HTTP 429.
+   * @throws {@link ClaudeSyncError} on any other non-2xx response.
+   */
+  private async requestRaw(url: string): Promise<Response> {
+    return this.requestResponse(url);
   }
 
   // --- Organizations ---
@@ -345,6 +376,73 @@ export class ClaudeSyncClient {
       buildUrl(ENDPOINTS.memory(orgId, projectId))
     );
     return ProjectMemorySchema.parse(data);
+  }
+
+  /**
+   * Replace a project's memory `controls` edit list, triggering the server to
+   * regenerate the memory doc from it. This is a synchronous write observed to
+   * take roughly 57 seconds -- the server does not return until regeneration
+   * completes -- so the call is bounded by `options.timeoutMs`
+   * (default {@link DEFAULT_MEMORY_CONTROLS_TIMEOUT_MS}) rather than the
+   * limiter's usual pacing alone.
+   *
+   * Unlike every read method on this client, this call is **never retried**,
+   * automatically or otherwise: a 429, a 5xx, a 401/403, or a timeout all
+   * surface directly to the caller. A timeout in particular does not mean the
+   * write failed -- the server may have already applied it when the client gave
+   * up waiting -- so blindly retrying could double-apply or race a concurrent
+   * write. Callers should re-run their push/reconciliation flow instead of
+   * retrying this call directly.
+   *
+   * @param orgId - Organization UUID.
+   * @param projectId - Project UUID, sent as `project_uuid`.
+   * @param controls - The full replacement edit list; this is not a merge or
+   * append, it replaces the server's current `controls` array entirely.
+   * @param options - See {@link PutProjectMemoryControlsOptions}.
+   * @throws {@link TypeError} if `options.timeoutMs` is non-finite or not
+   * strictly positive. Thrown before any network call is made.
+   * @throws {@link RateLimitError} on HTTP 429.
+   * @throws {@link ClaudeSyncError} on any other non-2xx response, or when the
+   * request aborts because `timeoutMs` elapsed -- in which case the message
+   * states the write may already be applied server-side and must not be
+   * retried automatically; re-run push to reconcile instead.
+   */
+  async putProjectMemoryControls(
+    orgId: string,
+    projectId: string,
+    controls: string[],
+    options?: PutProjectMemoryControlsOptions
+  ): Promise<void> {
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_MEMORY_CONTROLS_TIMEOUT_MS;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new TypeError(
+        `putProjectMemoryControls: timeoutMs must be a finite, positive number of milliseconds; got ${timeoutMs}`
+      );
+    }
+
+    try {
+      await this.requestResponse(
+        buildUrl(ENDPOINTS.memoryControls(orgId, projectId)),
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ controls }),
+          signal: AbortSignal.timeout(timeoutMs),
+        }
+      );
+    } catch (err) {
+      if (
+        err instanceof DOMException &&
+        (err.name === "AbortError" || err.name === "TimeoutError")
+      ) {
+        throw new ClaudeSyncError(
+          "Project memory controls write timed out waiting for the server's response. " +
+            "The write may have already been applied server-side -- do NOT automatically " +
+            "retry this call. Re-run push to reconcile local and remote state."
+        );
+      }
+      throw err;
+    }
   }
 
   // --- Artifacts (wiggle filesystem) ---

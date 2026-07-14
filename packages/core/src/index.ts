@@ -27,7 +27,7 @@ export { AuthError } from "./auth/errors.js";
 
 // Client -- the claude.ai HTTP client, its options, errors, and endpoint helpers
 export { ClaudeSyncClient } from "./client/client.js";
-export type { ClientOptions } from "./client/client.js";
+export type { ClientOptions, PutProjectMemoryControlsOptions } from "./client/client.js";
 export { ClaudeSyncError, RateLimitError } from "./client/errors.js";
 export { ENDPOINTS, buildUrl } from "./client/endpoints.js";
 
