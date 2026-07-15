@@ -1,6 +1,23 @@
 import { z } from "zod";
 
 /**
+ * Validates an account (per-user principal) record from the claude.ai web API.
+ *
+ * The account is identified by its {@link AccountSchema.uuid} (account-specific,
+ * not org-scoped like {@link OrganizationSchema}). Other fields like `email_address`
+ * are optional / passthrough for forward compatibility. `.passthrough()` keeps any
+ * unrecognized fields the API adds later rather than stripping them.
+ */
+export const AccountSchema = z
+  .object({
+    /** Stable account identifier; used as the principal for account-level actions (e.g. project memory push). */
+    uuid: z.string(),
+    /** Email address associated with the account, when present. */
+    email_address: z.string().optional(),
+  })
+  .passthrough();
+
+/**
  * Validates an organization (workspace/team) record from the claude.ai web API.
  *
  * `capabilities` and `active_flags` default to empty arrays so callers can read

@@ -2,6 +2,7 @@ import type { AuthProvider } from "../auth/types.js";
 import { buildUrl, ENDPOINTS } from "./endpoints.js";
 import { ClaudeSyncError, RateLimitError } from "./errors.js";
 import {
+  AccountSchema,
   OrganizationSchema,
   ConversationSummarySchema,
   ConversationSchema,
@@ -12,6 +13,7 @@ import {
   ProjectMemorySchema,
 } from "../models/schemas.js";
 import type {
+  Account,
   Organization,
   ConversationSummary,
   Conversation,
@@ -197,6 +199,23 @@ export class ClaudeSyncClient {
    */
   private async requestRaw(url: string): Promise<Response> {
     return this.requestResponse(url);
+  }
+
+  // --- Account ---
+
+  /**
+   * Fetch the authenticated account (per-user principal).
+   *
+   * Returns the current account record with its stable UUID and associated metadata.
+   * This is distinct from {@link listOrganizations}, which returns the organizations
+   * the account belongs to.
+   *
+   * @returns The validated account.
+   * @throws {@link ClaudeSyncError} on request failure or schema mismatch.
+   */
+  async getAccount(): Promise<Account> {
+    const data = await this.request(buildUrl(ENDPOINTS.account));
+    return AccountSchema.parse(data);
   }
 
   // --- Organizations ---

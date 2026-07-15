@@ -33,6 +33,7 @@ export { ENDPOINTS, buildUrl } from "./client/endpoints.js";
 
 // Models -- Zod schemas validating each claude.ai API response shape
 export {
+  AccountSchema,
   OrganizationSchema,
   ConversationSettingsSchema,
   AttachmentSchema,
@@ -50,6 +51,7 @@ export {
 
 // Models -- Types inferred from the schemas above
 export type {
+  Account,
   Organization,
   ConversationSettings,
   Attachment,

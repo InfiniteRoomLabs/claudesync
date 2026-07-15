@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type {
+  AccountSchema,
   OrganizationSchema,
   ConversationSettingsSchema,
   AttachmentSchema,
@@ -21,6 +22,8 @@ import type {
  * Edit the schema, not these aliases.
  */
 
+/** Inferred type for {@link AccountSchema}. */
+export type Account = z.infer<typeof AccountSchema>;
 /** Inferred type for {@link OrganizationSchema}. */
 export type Organization = z.infer<typeof OrganizationSchema>;
 /** Inferred type for {@link ConversationSettingsSchema}. */
