@@ -7,9 +7,18 @@ import {
   exportToGit,
   pullProjectMemory,
   readMemoryState,
+  writeMemoryState,
   computePrincipalFingerprint,
+  planProjectMemoryPush,
+  applyProjectMemoryPush,
 } from "@infinite-room-labs/claudesync-core";
-import type { GitBundleCommit } from "@infinite-room-labs/claudesync-core";
+import type {
+  GitBundleCommit,
+  PlanProjectMemoryPushOptions,
+  ProjectMemoryPushPlan,
+  ApplyProjectMemoryPushOptions,
+  ProjectMemoryPushOutcome,
+} from "@infinite-room-labs/claudesync-core";
 import { createClient, resolveOrgId, truncate, outputJson } from "../utils.js";
 
 export const projectsCommand = new Command("projects")
@@ -327,6 +336,117 @@ memoryCommand
     console.log(describeMemoryStatus(dir, orgId));
   });
 
+memoryCommand
+  .command("push")
+  .description(
+    "Push local memory edits to claude.ai (always fetches fresh and merges against the live remote; dry run by default)"
+  )
+  .argument("<project-id>", "Project UUID")
+  .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
+  .option("--output <dir>", "Local directory the project was pulled into (default: ./<project-id>)")
+  .option("--apply", "Actually send the write (default is a dry run that sends nothing)")
+  .option("--timeout <seconds>", "Timeout in seconds to wait for the write (default: 90)")
+  .option(
+    "--adopt-legacy-principal",
+    "Migrate a Phase 1 organization-keyed local sidecar to the current account principal (requires --confirm-project)"
+  )
+  .option(
+    "--confirm-project <project-id>",
+    "Must exactly equal <project-id>; required by --adopt-legacy-principal"
+  )
+  .option("--json", "Output structured JSON instead of text")
+  .action(async (
+    projectId: string,
+    options: {
+      org?: string;
+      output?: string;
+      apply?: boolean;
+      timeout?: string;
+      adoptLegacyPrincipal?: boolean;
+      confirmProject?: string;
+      json?: boolean;
+    }
+  ) => {
+    const { client, orgId, accountId } = await resolvePushPrincipal(options.org);
+    const outputDir = options.output ?? defaultMemoryOutputDir(projectId);
+    const dir = resolve(outputDir, "memory");
+
+    if (options.adoptLegacyPrincipal) {
+      if (options.confirmProject !== projectId) {
+        console.error(
+          `--adopt-legacy-principal requires --confirm-project to exactly equal "${projectId}".`
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const migration = adoptLegacyPrincipal({ dir, projectId, orgId, accountId });
+      console.log(
+        migration === "migrated"
+          ? "Migrated the local memory sidecar from the organization principal to the account principal."
+          : "The local memory sidecar is already keyed to the account principal; nothing to migrate."
+      );
+    }
+
+    await runProjectMemoryPush({
+      client,
+      orgId,
+      accountId,
+      projectId,
+      dir,
+      apply: options.apply,
+      timeoutMs: parseTimeoutSeconds(options.timeout),
+      json: options.json,
+    });
+  });
+
+const memoryEditsCommand = memoryCommand
+  .command("edits")
+  .description("Manage a project's local memory edit-control entries");
+
+memoryEditsCommand
+  .command("clear")
+  .description(
+    "Clear all local memory edit entries (base entries only -- a concurrent remote addition still survives the merge)"
+  )
+  .argument("<project-id>", "Project UUID")
+  .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
+  .option("--output <dir>", "Local directory the project was pulled into (default: ./<project-id>)")
+  .option("--apply", "Actually send the write (default is a dry run that sends nothing)")
+  .option("--confirm-project <project-id>", "Must exactly equal <project-id>; required by --apply")
+  .option("--timeout <seconds>", "Timeout in seconds to wait for the write (default: 90)")
+  .option("--json", "Output structured JSON instead of text")
+  .action(async (
+    projectId: string,
+    options: {
+      org?: string;
+      output?: string;
+      apply?: boolean;
+      confirmProject?: string;
+      timeout?: string;
+      json?: boolean;
+    }
+  ) => {
+    const { client, orgId, accountId } = await resolvePushPrincipal(options.org);
+    const outputDir = options.output ?? defaultMemoryOutputDir(projectId);
+    const dir = resolve(outputDir, "memory");
+
+    await runProjectMemoryPush({
+      client,
+      orgId,
+      accountId,
+      projectId,
+      dir,
+      apply: options.apply,
+      timeoutMs: parseTimeoutSeconds(options.timeout),
+      json: options.json,
+      localControlsOverride: [],
+      applyGuard: () =>
+        options.confirmProject === projectId
+          ? undefined
+          : `--apply requires --confirm-project to exactly equal "${projectId}".`,
+    });
+  });
+
 /**
  * Default local directory a `projects memory` subcommand reads from or
  * writes into when `--output` is not given. Uses the project UUID directly
@@ -375,6 +495,312 @@ function describeMemoryStatus(dir: string, accountId: string): string {
   }
 
   return `local pull present (last pulled ${prior.last_pull_at}); run pull to check for updates.`;
+}
+
+/**
+ * Resolves the org id and account id used as the push principal, shared
+ * verbatim by `projects memory push` and `projects memory edits clear` so
+ * both commands derive `accountId` the exact same way (`createClient` +
+ * `resolveOrgId` + `client.getAccount().uuid`) and stay interchangeable
+ * against the same local sidecar.
+ *
+ * @param orgOption - The `--org` option as parsed by commander; auto-detected when omitted.
+ * @returns The authenticated client, the resolved organization UUID, and the resolved account UUID.
+ */
+async function resolvePushPrincipal(
+  orgOption: string | undefined
+): Promise<{ client: ClaudeSyncClient; orgId: string; accountId: string }> {
+  const { auth, client } = createClient();
+  const orgId = await resolveOrgId(auth, orgOption);
+  const account = await client.getAccount();
+  return { client, orgId, accountId: account.uuid };
+}
+
+/**
+ * Parses the `--timeout <seconds>` CLI option into the milliseconds
+ * {@link ApplyProjectMemoryPushOptions.timeoutMs} expects. Validated eagerly
+ * so a malformed value is rejected with a clear message before any network
+ * I/O, rather than surfacing later as a `TypeError` from
+ * `putProjectMemoryControls`.
+ *
+ * @param seconds - The raw `--timeout` option value, or undefined if the flag was not given.
+ * @returns The value in milliseconds, or undefined if `seconds` was undefined.
+ */
+function parseTimeoutSeconds(seconds: string | undefined): number | undefined {
+  if (seconds === undefined) {
+    return undefined;
+  }
+  const parsedSeconds = Number(seconds);
+  if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0) {
+    console.error(`--timeout must be a positive number of seconds; got "${seconds}".`);
+    process.exit(1);
+  }
+  return parsedSeconds * 1000;
+}
+
+/**
+ * Starts a plain, escape-code-free elapsed-seconds ticker on a TTY stdout,
+ * used while `--apply` waits out claude.ai's roughly one-minute memory
+ * regeneration so the user sees the process is still alive. On a non-TTY
+ * stdout (piped or redirected output) this is a no-op -- no interval is
+ * started, and the returned stop function does nothing, so scripted/CI
+ * invocations never see partial-line output.
+ *
+ * @returns A stop function; call it exactly once when the wait ends, whether
+ * it succeeded or failed, to clear the interval and print a trailing newline.
+ */
+function startElapsedTimer(): () => void {
+  if (!process.stdout.isTTY) {
+    return () => {};
+  }
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+    process.stdout.write(`\r  ${elapsedSeconds}s elapsed...`);
+  }, 1000);
+  return () => {
+    clearInterval(timer);
+    process.stdout.write("\n");
+  };
+}
+
+/**
+ * Result of {@link adoptLegacyPrincipal}: whether the sidecar's fingerprint
+ * was actually rewritten.
+ */
+type LegacyPrincipalMigration = "migrated" | "already-account-keyed";
+
+/**
+ * The sole sanctioned migration path for a Phase 1 (organization-keyed)
+ * local memory sidecar: atomically rewrites only `principal_fingerprint` to
+ * the account-uuid fingerprint via {@link writeMemoryState}, leaving
+ * `edits.md`, `controls_base`, and every other sidecar field untouched.
+ * Invoked by `projects memory push --adopt-legacy-principal
+ * --confirm-project <id>` before the normal push flow runs, so the
+ * subsequent {@link planProjectMemoryPush} call (which enforces the
+ * account-fingerprint precondition) sees an already-migrated sidecar.
+ *
+ * @param opts.dir - The `memory/` directory holding the sidecar to migrate.
+ * @param opts.projectId - Expected `project_uuid`; checked before any write.
+ * @param opts.orgId - Organization UUID -- the Phase 1 principal input this
+ * migration moves away from.
+ * @param opts.accountId - Account UUID -- the Phase 2 principal input this
+ * migration adopts.
+ * @returns `"migrated"` if the fingerprint was rewritten, or
+ * `"already-account-keyed"` if the sidecar already matched `accountId` and
+ * nothing was written.
+ * @throws Error if no sidecar exists in `opts.dir`.
+ * @throws Error if the sidecar's `project_uuid` does not match `opts.projectId`.
+ * @throws Error if the sidecar's `principal_fingerprint` matches neither the
+ * organization fingerprint nor the account fingerprint -- adoption is
+ * refused rather than silently overwriting an unrelated principal's sidecar.
+ */
+function adoptLegacyPrincipal(opts: {
+  dir: string;
+  projectId: string;
+  orgId: string;
+  accountId: string;
+}): LegacyPrincipalMigration {
+  const { dir, projectId, orgId, accountId } = opts;
+
+  const state = readMemoryState(dir);
+  if (state === undefined) {
+    throw new Error(
+      `adoptLegacyPrincipal: no project memory sidecar found in "${dir}". Run \`projects memory pull\` first.`
+    );
+  }
+  if (state.project_uuid !== projectId) {
+    throw new Error(
+      `adoptLegacyPrincipal: the sidecar in "${dir}" belongs to project "${state.project_uuid}", not "${projectId}".`
+    );
+  }
+
+  const accountFingerprint = computePrincipalFingerprint(accountId);
+  if (state.principal_fingerprint === accountFingerprint) {
+    return "already-account-keyed";
+  }
+
+  const orgFingerprint = computePrincipalFingerprint(orgId);
+  if (state.principal_fingerprint !== orgFingerprint) {
+    throw new Error(
+      `adoptLegacyPrincipal: the sidecar in "${dir}" is fingerprinted to a principal that is neither the current ` +
+        "organization nor the current account -- refusing to adopt. This looks like a sidecar synced under an " +
+        "unrelated account; if that is not the case, re-run `projects memory pull --force` instead."
+    );
+  }
+
+  writeMemoryState(dir, { ...state, principal_fingerprint: accountFingerprint });
+  return "migrated";
+}
+
+/**
+ * Options accepted by {@link runProjectMemoryPush}.
+ */
+interface RunProjectMemoryPushOptions {
+  /** Client used for the fresh GET and, if `apply` is set, the PUT plus verification GET. */
+  client: ClaudeSyncClient;
+  /** Organization UUID the project belongs to. */
+  orgId: string;
+  /** Account UUID used as the push principal; see {@link PlanProjectMemoryPushOptions.accountId}. */
+  accountId: string;
+  /** Project UUID this push targets. */
+  projectId: string;
+  /** The `memory/` directory holding the sidecar, `MEMORY.md`, and `edits.md`. */
+  dir: string;
+  /** Whether to actually send the write (`--apply`); omitted or false is a dry run that sends nothing. */
+  apply?: boolean;
+  /** Millisecond timeout forwarded to `putProjectMemoryControls`, parsed from `--timeout <seconds>` via {@link parseTimeoutSeconds}. */
+  timeoutMs?: number;
+  /** Whether to print structured JSON (via {@link outputJson}) instead of human-readable text. */
+  json?: boolean;
+  /**
+   * Forwarded to {@link planProjectMemoryPush} and {@link applyProjectMemoryPush}.
+   * Omitted reads `edits.md` from `dir` (the `push` command); `[]` clears all
+   * local base entries (the `edits clear` command).
+   */
+  localControlsOverride?: string[];
+  /**
+   * Checked only when `apply` is true, immediately before sending -- lets
+   * `edits clear` require `--confirm-project` to match the positional project
+   * id before anything is sent. Returning a string aborts the apply with
+   * that string printed as an error and a nonzero exit; returning undefined
+   * proceeds. Omitted for `push`, which has no such guard.
+   */
+  applyGuard?: () => string | undefined;
+}
+
+/**
+ * Shared execution engine behind `projects memory push` and `projects
+ * memory edits clear`. Always performs a fresh `getProjectMemory` GET and a
+ * real {@link planProjectMemoryPush} call -- the plan is never trusted from
+ * a prior run or skipped, per the design's "never blind-PUT" rule -- then
+ * either prints a content-free dry-run summary (default) or, when `apply`
+ * is set, calls {@link applyProjectMemoryPush} and prints its outcome.
+ *
+ * Never prints memory or control-entry text, on any path: only counts,
+ * actions, timestamps, and hashes reach stdout/stderr, per the privacy
+ * convention {@link ProjectMemoryPushPlan} and {@link ProjectMemoryPushOutcome}
+ * document at the type level.
+ *
+ * @param opts - See {@link RunProjectMemoryPushOptions}.
+ */
+async function runProjectMemoryPush(opts: RunProjectMemoryPushOptions): Promise<void> {
+  const { client, orgId, accountId, projectId, dir, apply, timeoutMs, json, localControlsOverride, applyGuard } =
+    opts;
+
+  const remote = await client.getProjectMemory(orgId, projectId);
+  const plan: ProjectMemoryPushPlan = planProjectMemoryPush({
+    remote,
+    accountId,
+    projectId,
+    dir,
+    localControlsOverride,
+  });
+
+  if (plan.action === "no-memory") {
+    if (json) {
+      outputJson({ action: "no-memory" });
+    } else {
+      console.log(
+        "This project has no generated memory yet -- chat in it and wait for the nightly generation, then pull."
+      );
+    }
+    return;
+  }
+
+  if (!apply) {
+    if (json) {
+      outputJson({
+        action: plan.action,
+        localAdds: plan.localAdds,
+        localDeletes: plan.localDeletes,
+        remoteAdds: plan.remoteAdds,
+        remoteDeletes: plan.remoteDeletes,
+        remoteUpdatedAt: plan.remoteUpdatedAt,
+      });
+    } else {
+      console.log(
+        `Plan: add ${plan.localAdds}, delete ${plan.localDeletes}, ${plan.remoteAdds} remote addition(s) preserved. ` +
+          "Nothing sent -- re-run with --apply."
+      );
+    }
+    return;
+  }
+
+  const guardError = applyGuard?.();
+  if (guardError !== undefined) {
+    console.error(guardError);
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log("Updating project memory. claude.ai takes about 1 minute to regenerate it.");
+  const stopTimer = startElapsedTimer();
+  let outcome: ProjectMemoryPushOutcome;
+  try {
+    outcome = await applyProjectMemoryPush({
+      client,
+      orgId,
+      accountId,
+      projectId,
+      dir,
+      now: new Date().toISOString(),
+      localControlsOverride,
+      timeoutMs,
+    });
+  } finally {
+    stopTimer();
+  }
+
+  printPushOutcome(outcome, json);
+}
+
+/**
+ * Prints the content-free result of an applied {@link runProjectMemoryPush}
+ * call. `"verify-mismatch"` is treated as a warning-level failure per the
+ * design (the server did not persist the intended edits, most likely a
+ * concurrent write racing this one) -- it is always printed to stderr, even
+ * in `--json` mode, and sets a nonzero exit code.
+ *
+ * @param outcome - The result of {@link applyProjectMemoryPush}.
+ * @param json - Whether to also print `outcome`'s content-free fields as JSON via {@link outputJson}.
+ */
+function printPushOutcome(outcome: ProjectMemoryPushOutcome, json?: boolean): void {
+  if (json) {
+    outputJson({
+      action: outcome.action,
+      controlsCount: outcome.controlsCount,
+      memoryChanged: outcome.memoryChanged,
+      remoteUpdatedAt: outcome.remoteUpdatedAt,
+    });
+  }
+
+  switch (outcome.action) {
+    case "written":
+      if (!json) {
+        console.log(`written: ${outcome.controlsCount} edit(s) now live.`);
+      }
+      break;
+    case "unchanged":
+      if (!json) {
+        console.log("Already synchronized; nothing to push.");
+      }
+      break;
+    case "no-memory":
+      if (!json) {
+        console.log(
+          "This project has no generated memory yet -- chat in it and wait for the nightly generation, then pull."
+        );
+      }
+      break;
+    case "verify-mismatch":
+      console.error(
+        "Warning: the server did not persist the intended edits (a concurrent write may have raced this one). " +
+          "MEMORY.md was updated and local edits were preserved -- re-run push."
+      );
+      process.exitCode = 1;
+      break;
+  }
 }
 
 function buildProjectReadme(
