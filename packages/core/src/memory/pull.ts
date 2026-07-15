@@ -3,26 +3,17 @@ import path from "node:path";
 
 import { hashContent } from "./hash.js";
 import { canonicalize, parseEdits, serializeEdits } from "./edits.js";
+import { readMemoryState } from "./state.js";
 import {
-  readMemoryState,
-  writeMemoryState,
-  type MemoryState,
-} from "./state.js";
+  materializeProjectMemorySnapshot,
+  computePrincipalFingerprint,
+  snapshotHash,
+  MEMORY_FILENAME,
+  EDITS_FILENAME,
+} from "./materialize.js";
 import type { ProjectMemory } from "../models/types.js";
 
-/**
- * Filename of the local read-only mirror of the server-generated memory
- * document, written into a project's `memory/` directory by
- * {@link pullProjectMemory}.
- */
-const MEMORY_FILENAME = "MEMORY.md";
-
-/**
- * Filename of the local read-only mirror of the server-tracked edit-control
- * list (serialized via {@link serializeEdits}), written into a project's
- * `memory/` directory by {@link pullProjectMemory}.
- */
-const EDITS_FILENAME = "edits.md";
+export { computePrincipalFingerprint };
 
 /**
  * Outcome of a single {@link pullProjectMemory} call, reporting what happened
@@ -81,46 +72,6 @@ export interface PullProjectMemoryOptions {
    * files even if they are dirty (a conflict becomes a `"written"` re-pull).
    */
   force?: boolean;
-}
-
-/**
- * Deterministic fingerprint of a claude.ai account identifier, used to detect
- * when a memory directory that was pulled under one account is being pulled
- * again under a different one (e.g. a shared checkout, or a credential swap).
- *
- * @param accountId - The claude.ai account identifier.
- * @returns `hashContent(accountId)`.
- */
-export function computePrincipalFingerprint(accountId: string): string {
-  return hashContent(accountId);
-}
-
-/**
- * Stable fingerprint over the memory document hash and the ordered
- * per-control hashes, used as the sidecar's `remote_snapshot_sha256` for the
- * idempotency no-op check: if this hash is unchanged and neither local file
- * is dirty, a pull is a true no-op.
- *
- * @param memoryHash - `hashContent` of the canonicalized memory document.
- * @param controlHashes - Ordered per-entry `hashContent` of the `controls` array.
- * @returns `hashContent(memoryHash + "\n" + controlHashes.join("\n"))`.
- */
-export function snapshotHash(memoryHash: string, controlHashes: string[]): string {
-  return hashContent(memoryHash + "\n" + controlHashes.join("\n"));
-}
-
-/**
- * Write `text` to `filePath` atomically (tmp file + rename) with owner-only
- * permissions, mirroring the pattern `state.ts` uses for the sidecar. If the
- * process dies mid-write the previous file (if any) is left intact.
- *
- * @param filePath - Destination path.
- * @param text - Content to write.
- */
-function writeFileAtomic(filePath: string, text: string): void {
-  const tmpPath = filePath + ".tmp";
-  fs.writeFileSync(tmpPath, text, { encoding: "utf-8", mode: 0o600 });
-  fs.renameSync(tmpPath, filePath);
 }
 
 /**
@@ -271,24 +222,15 @@ export function pullProjectMemory(opts: PullProjectMemoryOptions): MemoryPullOut
     // Else: no stray local files, or they already match what we'd write.
   }
 
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  fs.chmodSync(dir, 0o700);
-  writeFileAtomic(memoryPath, canonicalMemory);
-  writeFileAtomic(editsPath, editsFileText);
+  const outcome = materializeProjectMemorySnapshot({
+    remote: { ...remote, controls: remote.controls ?? [] },
+    prior,
+    accountId,
+    projectId,
+    dir,
+    now,
+    source: "pull",
+  });
 
-  const memoryChanged = prior !== undefined && prior.memory_content_sha256 !== memoryHash;
-
-  const newState: MemoryState = {
-    schema_version: 1,
-    project_uuid: projectId,
-    principal_fingerprint: principalFingerprint,
-    memory_content_sha256: memoryHash,
-    controls_base: controlHashes,
-    remote_snapshot_sha256: snapshot,
-    last_pull_at: now,
-    remote_updated_at: remote.updated_at,
-  };
-  writeMemoryState(dir, newState);
-
-  return { action: "written", memoryChanged, controlsCount };
+  return { action: "written", memoryChanged: outcome.memoryChanged, controlsCount: outcome.controlsCount };
 }
