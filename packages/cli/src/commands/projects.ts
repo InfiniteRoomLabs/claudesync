@@ -278,24 +278,22 @@ memoryCommand
     projectId: string,
     options: { org?: string; output?: string; force?: boolean }
   ) => {
-    const { auth, client } = createClient();
-    const orgId = await resolveOrgId(auth, options.org);
+    const { client, orgId, accountId } = await resolveMemoryPrincipal(options.org);
     const remote = await client.getProjectMemory(orgId, projectId);
 
     const outputDir = options.output ?? defaultMemoryOutputDir(projectId);
     const dir = resolve(outputDir, "memory");
 
-    // The auth layer exposes only an org id (no separate account id), and it
-    // is 1:1 with the account for this tool -- reuse it as the principal
-    // fingerprint input passed to pullProjectMemory. `status` below MUST
-    // derive accountId the same way (resolveOrgId, no other transform) so
-    // the fingerprints recorded in the sidecar line up across commands.
-    // Phase 1 uses the org id as the principal (single-member-org
-    // assumption); a per-user account id from /api/account is a Phase 2
-    // upgrade.
+    // The principal fingerprint is keyed to the account uuid (resolved via
+    // resolveMemoryPrincipal's client.getAccount() call), not the org id --
+    // matching push and edits clear. `status` below MUST derive accountId
+    // the exact same way so the fingerprints recorded in the sidecar line up
+    // across commands. A sidecar written by the earlier Phase 1 code (which
+    // keyed the principal to the org id) can be migrated onto the account
+    // principal via `push --adopt-legacy-principal`.
     const outcome = pullProjectMemory({
       remote,
-      accountId: orgId,
+      accountId,
       projectId,
       dir,
       now: new Date().toISOString(),
@@ -327,13 +325,12 @@ memoryCommand
   .option("--org <orgId>", "Organization ID (auto-detected if omitted)")
   .option("--output <dir>", "Local directory the project was pulled into (default: ./<project-id>)")
   .action(async (projectId: string, options: { org?: string; output?: string }) => {
-    const { auth } = createClient();
-    const orgId = await resolveOrgId(auth, options.org);
+    const { accountId } = await resolveMemoryPrincipal(options.org);
 
     const outputDir = options.output ?? defaultMemoryOutputDir(projectId);
     const dir = resolve(outputDir, "memory");
 
-    console.log(describeMemoryStatus(dir, orgId));
+    console.log(describeMemoryStatus(dir, accountId));
   });
 
 memoryCommand
@@ -367,7 +364,7 @@ memoryCommand
       json?: boolean;
     }
   ) => {
-    const { client, orgId, accountId } = await resolvePushPrincipal(options.org);
+    const { client, orgId, accountId } = await resolveMemoryPrincipal(options.org);
     const outputDir = options.output ?? defaultMemoryOutputDir(projectId);
     const dir = resolve(outputDir, "memory");
 
@@ -426,7 +423,7 @@ memoryEditsCommand
       json?: boolean;
     }
   ) => {
-    const { client, orgId, accountId } = await resolvePushPrincipal(options.org);
+    const { client, orgId, accountId } = await resolveMemoryPrincipal(options.org);
     const outputDir = options.output ?? defaultMemoryOutputDir(projectId);
     const dir = resolve(outputDir, "memory");
 
@@ -470,10 +467,11 @@ function defaultMemoryOutputDir(projectId: string): string {
  * pull's engine and risk silently drifting out of sync with it. Instead this
  * makes a single network-free check the sidecar can already answer: whether
  * a pull has ever happened, when, and whether it was made under the account
- * currently resolved (same org-id-as-principal convention `pull` uses).
+ * currently resolved (same account-uuid-as-principal convention `pull` uses
+ * via {@link resolveMemoryPrincipal}).
  *
  * @param dir - The `memory/` directory a prior `pull` would have written into.
- * @param accountId - The resolved org id, used identically to how `pull` derives `accountId`.
+ * @param accountId - The resolved account uuid, used identically to how `pull` derives `accountId`.
  * @returns One of: "no local pull", "local pull present but was made under a
  * different account ..." (principal fingerprint mismatch), or "local pull
  * present (last pulled ...); run pull to check for updates".
@@ -484,8 +482,6 @@ function describeMemoryStatus(dir: string, accountId: string): string {
     return "no local pull";
   }
 
-  // Phase 1 uses the org id as the principal (single-member-org assumption);
-  // a per-user account id from /api/account is a Phase 2 upgrade.
   const principalFingerprint = computePrincipalFingerprint(accountId);
   if (prior.principal_fingerprint !== principalFingerprint) {
     return (
@@ -498,16 +494,20 @@ function describeMemoryStatus(dir: string, accountId: string): string {
 }
 
 /**
- * Resolves the org id and account id used as the push principal, shared
- * verbatim by `projects memory push` and `projects memory edits clear` so
- * both commands derive `accountId` the exact same way (`createClient` +
- * `resolveOrgId` + `client.getAccount().uuid`) and stay interchangeable
- * against the same local sidecar.
+ * Resolves the org id and account id used as the memory principal, shared
+ * verbatim by every `projects memory` subcommand that reads or writes the
+ * local sidecar (`pull`, `status`, `push`, `edits clear`) so they all derive
+ * `accountId` the exact same way (`createClient` + `resolveOrgId` +
+ * `client.getAccount().uuid`) and stay interchangeable against the same
+ * local sidecar. `accountId` -- not `orgId` -- is what gets fingerprinted
+ * into the sidecar's `principal_fingerprint`; a sidecar written under the
+ * earlier org-keyed convention is not automatically recognized here and must
+ * be migrated via `push --adopt-legacy-principal`.
  *
  * @param orgOption - The `--org` option as parsed by commander; auto-detected when omitted.
  * @returns The authenticated client, the resolved organization UUID, and the resolved account UUID.
  */
-async function resolvePushPrincipal(
+async function resolveMemoryPrincipal(
   orgOption: string | undefined
 ): Promise<{ client: ClaudeSyncClient; orgId: string; accountId: string }> {
   const { auth, client } = createClient();

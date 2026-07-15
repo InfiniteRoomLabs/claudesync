@@ -75,7 +75,12 @@ export interface ProjectMemoryPushPlan {
   /**
    * What the plan recommends:
    * - `"no-memory"` -- the project has never had memory generated
-   *   (`remote.controls === null`); there is nothing to push.
+   *   (`remote.memory === ""`); there is nothing to push. Note that
+   *   `remote.controls === null` alone is NOT a reliable never-generated
+   *   signal: a project with a fully generated memory doc but zero edit
+   *   instructions also reports `controls: null`. That case is normalized
+   *   to an empty controls array and merged normally -- it resolves to
+   *   `"no-op"` or `"put"`, never `"no-memory"`.
    * - `"no-op"` -- the merged controls are identical (normalized,
    *   order-sensitive) to the live remote controls; a `PUT` would be a
    *   no-op write.
@@ -174,15 +179,20 @@ function normalizeControls(entries: readonly string[]): string[] {
  *    `computePrincipalFingerprint(opts.accountId)` -- thrown if not, naming
  *    `--adopt-legacy-principal` as the only sanctioned migration path for a
  *    sidecar synced under a different account.
- * 4. If `opts.remote.controls === null` (memory never generated for this
+ * 4. If `opts.remote.memory === ""` (memory never generated for this
  *    project), the plan is `"no-memory"` immediately -- `edits.md` is never
  *    read or required in this case, since there is nothing to merge against.
- * 5. Otherwise, the local control entries are obtained (from
- *    `opts.localControlsOverride` if supplied, else by reading `edits.md` --
- *    throwing if that file is missing), validated via
- *    {@link assertNoDelimiterEntries}, and merged against `opts.remote.controls`
- *    with `state.controls_base` as the three-way merge base via
- *    {@link mergeProjectMemoryControls}.
+ *    `opts.remote.controls === null` is deliberately NOT checked here: a
+ *    project can have a fully generated memory doc and zero edit
+ *    instructions, which also reports `controls: null` -- that is not the
+ *    never-generated case and must fall through to step 5.
+ * 5. Otherwise, `opts.remote.controls` is normalized to `[]` if `null` (the
+ *    zero-edit-instructions case from step 4's note), then the local control
+ *    entries are obtained (from `opts.localControlsOverride` if supplied,
+ *    else by reading `edits.md` -- throwing if that file is missing),
+ *    validated via {@link assertNoDelimiterEntries}, and merged against the
+ *    normalized remote controls with `state.controls_base` as the three-way
+ *    merge base via {@link mergeProjectMemoryControls}.
  * 6. If the merged controls (normalized) exactly equal the remote controls
  *    (normalized, order-sensitive), the plan is `"no-op"`; otherwise `"put"`.
  *
@@ -193,8 +203,8 @@ function normalizeControls(entries: readonly string[]): string[] {
  * @throws Error if the sidecar's `principal_fingerprint` does not match the
  * fingerprint of `opts.accountId`.
  * @throws Error if `edits.md` is missing from `opts.dir` and
- * `opts.localControlsOverride` was not supplied, and `opts.remote.controls`
- * is not null.
+ * `opts.localControlsOverride` was not supplied, and `opts.remote.memory`
+ * is not `""` (i.e. this is not the `"no-memory"` case).
  * @throws Error if any local control entry contains a line equal to the
  * `edits.md` delimiter (`---`), per {@link assertNoDelimiterEntries}.
  */
@@ -222,7 +232,7 @@ export function planProjectMemoryPush(opts: PlanProjectMemoryPushOptions): Proje
     );
   }
 
-  if (remote.controls === null) {
+  if (remote.memory === "") {
     return {
       projectId,
       action: "no-memory",
@@ -236,11 +246,18 @@ export function planProjectMemoryPush(opts: PlanProjectMemoryPushOptions): Proje
     };
   }
 
+  // `remote.controls` is null both when memory was never generated (already
+  // handled above) and when memory HAS been generated but the project has
+  // zero edit instructions -- the latter is a legitimate first-edit state,
+  // not a no-memory state, so it normalizes to an empty list and merges
+  // normally rather than short-circuiting.
+  const remoteControls = remote.controls ?? [];
+
   const local = localControlsOverride ?? readLocalEditsOrThrow(dir);
   assertNoDelimiterEntries(local);
 
-  const mergeResult = mergeProjectMemoryControls(state.controls_base, local, remote.controls);
-  const remoteNormalized = normalizeControls(remote.controls);
+  const mergeResult = mergeProjectMemoryControls(state.controls_base, local, remoteControls);
+  const remoteNormalized = normalizeControls(remoteControls);
   const action = stringArraysEqual(mergeResult.controls, remoteNormalized) ? "no-op" : "put";
 
   return {
@@ -374,6 +391,11 @@ function writeVerifyMismatchMemoryOnly(
   fs.chmodSync(dir, 0o700);
   writeFileAtomic(memoryPath, canonicalMemory);
 
+  // NOTE: remote_updated_at is advanced to this verify GET's timestamp while
+  // controls_base stays at the pre-push base (see the @returns/@param docs
+  // above -- controls_base is carried through verbatim). remote_updated_at is
+  // purely informational here and drives no branching; do not read it as the
+  // observation time of controls_base.
   const newState: MemoryState = {
     ...prior,
     memory_content_sha256: memoryHash,
@@ -413,12 +435,19 @@ function writeVerifyMismatchMemoryOnly(
  *    other error propagates to the caller unchanged, since the write may
  *    already have applied server-side and blind retry could double-apply it.
  * 6. After a successful `PUT`, `GET` again to verify. If the server reports
- *    `controls === null` here, the write appears to have been lost --
- *    this throws rather than silently reporting success. Otherwise, if the
- *    normalized returned controls exactly equal the plan's merged controls,
- *    the full snapshot is materialized (`source: "push"`, advancing
- *    `MEMORY.md`, `edits.md`, and the sidecar including `controls_base` and
- *    `last_push_at`) and the outcome is `"written"`.
+ *    `controls === null` here, the write did not visibly take effect --
+ *    either the server lost the write, or (for a project pushing its first
+ *    edit instruction, i.e. `plan.remoteControls` was empty because the
+ *    opening GET's `controls` was null despite a generated memory doc) the
+ *    server does not support initializing the edit list via this API for
+ *    this project. Either way this throws rather than silently reporting
+ *    success; nothing has been materialized at this point, so `edits.md` and
+ *    the sidecar's `controls_base` are untouched and local edits are
+ *    preserved. Otherwise, if the normalized returned controls exactly equal
+ *    the plan's merged controls, the full snapshot is materialized
+ *    (`source: "push"`, advancing `MEMORY.md`, `edits.md`, and the sidecar
+ *    including `controls_base` and `last_push_at`) and the outcome is
+ *    `"written"`.
  * 7. Otherwise (the verification GET's controls differ from what was sent --
  *    a hybrid verify-mismatch, most likely a concurrent external write
  *    racing this one): only `MEMORY.md` and a narrow slice of the sidecar
@@ -436,7 +465,9 @@ function writeVerifyMismatchMemoryOnly(
  * @throws Whatever `client.putProjectMemoryControls` throws, unmodified --
  * in particular a timeout's ambiguous-write error, which is never retried.
  * @throws Error if the post-write verification GET reports `controls === null`,
- * i.e. the server appears to have lost the just-applied write.
+ * i.e. the write did not visibly take effect -- either the server lost it, or
+ * it does not support initializing the edit list via this API for this
+ * project. Local edits are preserved; nothing was materialized.
  * @throws Whatever {@link withProjectMemoryLock} throws if the lock is
  * already held by another non-stale push.
  */
@@ -487,7 +518,9 @@ export async function applyProjectMemoryPush(
       if (verifyRemote.controls === null) {
         throw new Error(
           `applyProjectMemoryPush: project "${projectId}" reported no controls immediately after a successful ` +
-            "write -- the write may have been lost server-side. Re-run push to reconcile.",
+            "write -- the server either lost the write or does not support initializing the edit list via API " +
+            "for this project. The write did not take effect; local edits.md and the sidecar's controls_base " +
+            "are unchanged. Re-run push to reconcile.",
         );
       }
 

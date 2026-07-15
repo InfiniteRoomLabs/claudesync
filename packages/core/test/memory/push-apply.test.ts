@@ -246,6 +246,45 @@ describe("applyProjectMemoryPush", () => {
     ).rejects.toThrow(/lost|null|controls/i);
   });
 
+  it("first-edit PUT: memory generated, controls null, local one add -> PUT sends the add; a post-PUT GET still reporting controls null throws the reworded lost-or-unsupported error and leaves edits.md/controls_base untouched", async () => {
+    const d = mkdir();
+    bootstrapPulled(d, "m1\n", []); // pulled base with zero prior edit instructions
+    fs.writeFileSync(path.join(d, "edits.md"), "a\n", "utf-8");
+    const editsBefore = fs.readFileSync(path.join(d, "edits.md"), "utf-8");
+    const stateBefore = readMemoryState(d)!;
+
+    // Opening GET: memory has been generated but this project has zero edit
+    // instructions, so controls is null (the corrected-fact scenario) rather
+    // than the true no-memory signal (remote.memory === "").
+    const openingRemote = remote("m1\n", null, "2026-07-15T05:00:00Z");
+    // Post-PUT verify GET: the server still reports controls null -- it either
+    // lost the write or does not support initializing the edit list via this
+    // API for this project.
+    const verifyRemote = remote("", null, null);
+    const { client, calls } = makeFakeClient([openingRemote, verifyRemote]);
+
+    await expect(
+      applyProjectMemoryPush({
+        client,
+        orgId,
+        accountId,
+        projectId,
+        dir: d,
+        now: "2026-07-15T00:00:00.000Z",
+      }),
+    ).rejects.toThrow(/lost the write|does not support initializing/i);
+
+    expect(calls.map((c) => c.type)).toEqual(["get", "put", "get"]);
+    const putCall = calls.find((c) => c.type === "put");
+    expect(putCall).toBeDefined();
+    expect((putCall as { controls: string[] }).controls).toEqual(["a"]);
+
+    expect(fs.readFileSync(path.join(d, "edits.md"), "utf-8")).toBe(editsBefore);
+    // Nothing was materialized at all: the throw fires before any write, so
+    // the sidecar is byte-for-byte unchanged, not just controls_base.
+    expect(readMemoryState(d)).toEqual(stateBefore);
+  });
+
   it("simulated crash-after-PUT: re-running apply against a remote that already equals the intended merge becomes unchanged", async () => {
     const d = mkdir();
     bootstrapPulled(d, "m1\n", ["a"]);

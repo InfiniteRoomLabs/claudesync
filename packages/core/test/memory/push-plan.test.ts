@@ -89,7 +89,7 @@ describe("planProjectMemoryPush", () => {
     ).toThrow(/--adopt-legacy-principal/);
   });
 
-  it("remote.controls === null -> action is no-memory", () => {
+  it("remote.memory === '' -> action is no-memory", () => {
     const d = bootstrapPulled("m\n", ["a"]);
     const plan = planProjectMemoryPush({
       remote: remote("", null, null),
@@ -98,6 +98,53 @@ describe("planProjectMemoryPush", () => {
       dir: d,
     });
     expect(plan.action).toBe("no-memory");
+    expect(plan.mergedControls).toEqual([]);
+    expect(plan.remoteControls).toEqual([]);
+    expect(plan.localAdds).toBe(0);
+    expect(plan.localDeletes).toBe(0);
+    expect(plan.remoteAdds).toBe(0);
+    expect(plan.remoteDeletes).toBe(0);
+  });
+
+  it("no-memory check precedes the missing-edits.md check (ordering pin): missing edits.md + remote.memory === '' still resolves to no-memory, not a throw", () => {
+    const d = bootstrapPulled("m\n", ["a"]);
+    fs.rmSync(path.join(d, "edits.md"));
+    const plan = planProjectMemoryPush({
+      remote: remote("", null, null),
+      accountId: "acct-1",
+      projectId: "proj-1",
+      dir: d,
+    });
+    expect(plan.action).toBe("no-memory");
+  });
+
+  it("first edit: memory generated, controls null (zero prior edit instructions), local has one add -> put, the add is preserved", () => {
+    const d = bootstrapPulled("m\n", []);
+    fs.writeFileSync(path.join(d, "edits.md"), "a\n", "utf-8");
+    const plan = planProjectMemoryPush({
+      remote: remote("m\n", null),
+      accountId: "acct-1",
+      projectId: "proj-1",
+      dir: d,
+    });
+    expect(plan.action).toBe("put");
+    expect(plan.mergedControls).toEqual(["a"]);
+    expect(plan.remoteControls).toEqual([]);
+    expect(plan.localAdds).toBe(1);
+    expect(plan.localDeletes).toBe(0);
+    expect(plan.remoteAdds).toBe(0);
+    expect(plan.remoteDeletes).toBe(0);
+  });
+
+  it("first edit with no local intent: memory generated, controls null, local empty -> no-op (not no-memory)", () => {
+    const d = bootstrapPulled("m\n", []);
+    const plan = planProjectMemoryPush({
+      remote: remote("m\n", null),
+      accountId: "acct-1",
+      projectId: "proj-1",
+      dir: d,
+    });
+    expect(plan.action).toBe("no-op");
     expect(plan.mergedControls).toEqual([]);
     expect(plan.remoteControls).toEqual([]);
     expect(plan.localAdds).toBe(0);
