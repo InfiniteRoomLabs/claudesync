@@ -185,6 +185,8 @@ export {
   assertNoDelimiterEntries,
 } from "./memory/merge.js";
 export type { ControlsMergeResult } from "./memory/merge.js";
+export { withProjectMemoryLock, MEMORY_LOCK_FILENAME } from "./memory/lock.js";
+export type { WithProjectMemoryLockOptions } from "./memory/lock.js";
 
 // Naming helpers -- slugify titles into filesystem-safe names
 export { slugify, safeSlug, displayName } from "./util/naming.js";
