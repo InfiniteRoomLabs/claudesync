@@ -5,6 +5,11 @@ import {
   EnvAuth,
   AuthError,
   ClaudeSyncError,
+  hashContent,
+  serializeEdits,
+  parseEdits,
+  mergeProjectMemoryControls,
+  assertNoDelimiterEntries,
 } from "@infinite-room-labs/claudesync-core";
 import type { AuthProvider } from "@infinite-room-labs/claudesync-core";
 
@@ -45,9 +50,84 @@ function withErrorHandling(
   });
 }
 
-export function createServer(): McpServer {
-  const auth = resolveAuth();
-  const client = new ClaudeSyncClient(auth);
+/**
+ * Normalize a raw controls array to the canonical on-disk form (trimmed,
+ * blank entries dropped) by round-tripping through {@link serializeEdits} and
+ * {@link parseEdits}. Mirrors the normalization
+ * `packages/core/src/memory/push.ts`'s `normalizeControls` applies before
+ * comparing merged controls against the live remote, so `put_project_memory_controls`
+ * makes the same no-op decision the CLI push path would.
+ *
+ * @param entries - Raw control entries.
+ * @returns The normalized entries, in the same relative order.
+ */
+function normalizeControls(entries: readonly string[]): string[] {
+  return parseEdits(serializeEdits(Array.from(entries)));
+}
+
+/**
+ * Compare two string arrays for exact equality: same length, same values,
+ * same order.
+ *
+ * @param a - First array.
+ * @param b - Second array.
+ * @returns True if both arrays contain the same strings in the same order.
+ */
+function controlsArraysEqual(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((entry, index) => entry === b[index]);
+}
+
+/**
+ * Content-free fingerprint of a controls array: the {@link hashContent} hash
+ * of its canonical `edits.md` serialization ({@link serializeEdits}). Used to
+ * report what changed in a `put_project_memory_controls` response without
+ * ever including control text -- the tool's privacy contract.
+ *
+ * @param controls - Control entries, ideally already normalized via
+ * {@link normalizeControls} so the hash is stable regardless of whitespace.
+ * @returns The 64-character lowercase hex digest of the serialized form.
+ */
+function hashControls(controls: readonly string[]): string {
+  return hashContent(serializeEdits(Array.from(controls)));
+}
+
+/**
+ * Options accepted by {@link createServer}. Every field is optional: production
+ * usage (`createServer()` with no arguments) derives everything from the
+ * environment, while tests inject a fake {@link AuthProvider} and/or
+ * {@link ClaudeSyncClient} and pin {@link CreateServerOptions.memoryWriteEnabled}
+ * directly instead of mutating `process.env`.
+ */
+export interface CreateServerOptions {
+  /**
+   * Session-cookie provider used for every claude.ai API request and for
+   * auto-detecting `orgId` on tools that accept it as optional. Defaults to
+   * {@link resolveAuth}'s result (an `EnvAuth` reading `CLAUDE_AI_COOKIE`).
+   */
+  auth?: AuthProvider;
+  /**
+   * The claude.ai API client every tool handler calls through. Defaults to a
+   * fresh {@link ClaudeSyncClient} constructed from `auth`. Tests inject a
+   * fake object implementing just the methods the tools under test call.
+   */
+  client?: ClaudeSyncClient;
+  /**
+   * Gates registration of the `put_project_memory_controls` write tool: when
+   * `false` (or omitted with the env var unset/mismatched), the tool is not
+   * registered at all, so it never appears in `tools/list` and cannot be
+   * called. Defaults to
+   * `process.env.CLAUDESYNC_MCP_WRITE_SCOPE === "project-memory"` -- an
+   * exact string match, so `"true"`, `"1"`, and `"all"` do NOT enable it.
+   * Read-only tools are registered unconditionally either way.
+   */
+  memoryWriteEnabled?: boolean;
+}
+
+export function createServer(options?: CreateServerOptions): McpServer {
+  const auth = options?.auth ?? resolveAuth();
+  const client = options?.client ?? new ClaudeSyncClient(auth);
+  const memoryWriteEnabled =
+    options?.memoryWriteEnabled ?? process.env.CLAUDESYNC_MCP_WRITE_SCOPE === "project-memory";
 
   const server = new McpServer({
     name: "claudesync",
@@ -357,6 +437,149 @@ export function createServer(): McpServer {
       });
     }
   );
+
+  // --- put_project_memory_controls (gated write tool) ---
+  if (memoryWriteEnabled) {
+    server.tool(
+      "put_project_memory_controls",
+      "Write a claude.ai project's memory edit-instruction list (controls), three-way merging the caller's " +
+        "desired list against the live remote so a concurrent edit made on claude.ai is not clobbered. This " +
+        "triggers a synchronous server-side regeneration of the memory doc and can take up to about a minute " +
+        "to return. The underlying write is NEVER retried automatically by this server, and callers MUST NOT " +
+        "auto-retry after a timeout either -- a timeout does not mean the write failed, it may already be " +
+        "applied server-side; re-read via get_project_memory and re-call this tool to reconcile instead. " +
+        "Requires expectedUpdatedAt from a fresh get_project_memory read (refuses on any mismatch, i.e. a stale " +
+        "read) and confirmProjectId equal to projectId as a deliberate confirmation gate checked before any " +
+        "network call. Returns only content-free hashes and counts -- never memory or control text.",
+      {
+        projectId: z.string().describe("The project UUID to write memory controls for"),
+        confirmProjectId: z
+          .string()
+          .describe(
+            "Must exactly equal projectId. A deliberate confirmation gate checked before any GET or PUT, " +
+              "to guard against an accidental write to the wrong project."
+          ),
+        orgId: z
+          .string()
+          .optional()
+          .describe(
+            "Organization UUID. Omit to auto-detect from session."
+          ),
+        expectedUpdatedAt: z
+          .string()
+          .describe(
+            "The remote's updated_at from a fresh get_project_memory call. If the live remote's updated_at " +
+              "no longer matches, the write is refused as a stale read rather than silently merged."
+          ),
+        baseControls: z
+          .array(z.string())
+          .describe(
+            "The control entries the caller's desiredControls were derived from (the three-way merge base) -- " +
+              "typically the controls list from the same read that produced expectedUpdatedAt."
+          ),
+        desiredControls: z
+          .array(z.string())
+          .describe(
+            "The caller's desired full ordered control list after local edits. Merged against the live remote " +
+              "controls using baseControls as the merge base before being sent."
+          ),
+      },
+      async ({ projectId, confirmProjectId, orgId, expectedUpdatedAt, baseControls, desiredControls }) => {
+        return withErrorHandling(async () => {
+          if (confirmProjectId !== projectId) {
+            throw new Error(
+              `put_project_memory_controls: confirmProjectId ("${confirmProjectId}") does not equal projectId ` +
+                `("${projectId}"). Refusing to write before any read or write call.`
+            );
+          }
+
+          const resolvedOrgId = orgId ?? (await auth.getOrganizationId());
+          const remote = await client.getProjectMemory(resolvedOrgId, projectId);
+
+          if (remote.memory === "") {
+            throw new Error(
+              `put_project_memory_controls: project "${projectId}" has no memory generated yet (memory === ""). ` +
+                "There is nothing to attach edit controls to."
+            );
+          }
+
+          if (remote.updated_at !== expectedUpdatedAt) {
+            throw new Error(
+              `put_project_memory_controls: stale read -- the live remote's updated_at is "${remote.updated_at}" ` +
+                `but expectedUpdatedAt was "${expectedUpdatedAt}". Re-read via get_project_memory and retry with ` +
+                "the current value; this tool never silently merges over a stale read."
+            );
+          }
+
+          const baseHashes = normalizeControls(baseControls).map(hashContent);
+          assertNoDelimiterEntries(desiredControls);
+          const remoteControls = remote.controls ?? [];
+          const remoteNormalized = normalizeControls(remoteControls);
+          const merge = mergeProjectMemoryControls(baseHashes, desiredControls, remoteControls);
+
+          if (controlsArraysEqual(merge.controls, remoteNormalized)) {
+            const sha = hashControls(remoteNormalized);
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: JSON.stringify(
+                    {
+                      action: "no-op",
+                      before_controls_sha256: sha,
+                      after_controls_sha256: sha,
+                      before_updated_at: remote.updated_at,
+                      after_updated_at: remote.updated_at,
+                      controls_count: remoteNormalized.length,
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+            };
+          }
+
+          const beforeControlsSha256 = hashControls(remoteNormalized);
+          const beforeUpdatedAt = remote.updated_at;
+
+          await client.putProjectMemoryControls(resolvedOrgId, projectId, merge.controls);
+
+          const verifyRemote = await client.getProjectMemory(resolvedOrgId, projectId);
+
+          if (verifyRemote.controls === null && merge.controls.length > 0) {
+            throw new Error(
+              `put_project_memory_controls: the PUT for project "${projectId}" completed, but the post-write ` +
+                "verification read returned controls === null even though a non-empty list was sent. The server " +
+                "did not persist the write -- it may not support initializing the edit list for this project. " +
+                "Client edits were NOT applied; re-read via get_project_memory before retrying."
+            );
+          }
+
+          const afterNormalized = normalizeControls(verifyRemote.controls ?? []);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify(
+                  {
+                    action: "written",
+                    before_controls_sha256: beforeControlsSha256,
+                    after_controls_sha256: hashControls(afterNormalized),
+                    before_updated_at: beforeUpdatedAt,
+                    after_updated_at: verifyRemote.updated_at,
+                    controls_count: afterNormalized.length,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        });
+      }
+    );
+  }
 
   return server;
 }
