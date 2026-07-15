@@ -94,6 +94,18 @@ describe("putProjectMemoryControls", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("throws an ambiguous-write error on TimeoutError without retrying", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new DOMException("The operation timed out", "TimeoutError");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      client().putProjectMemoryControls("org-123", "proj-456", ["entry-a"])
+    ).rejects.toThrow(/may have.*applied|re-run push/is);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("defaults the abort timeout to 90000 ms", async () => {
     const fetchMock = vi.fn(
       async () => new Response(JSON.stringify(null), { status: 200 })
