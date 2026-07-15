@@ -180,6 +180,11 @@ export { readMemoryState, writeMemoryState, MEMORY_STATE_FILENAME } from "./memo
 export type { MemoryState } from "./memory/state.js";
 export { canonicalize, serializeEdits, parseEdits } from "./memory/edits.js";
 export { hashContent } from "./memory/hash.js";
+export {
+  mergeProjectMemoryControls,
+  assertNoDelimiterEntries,
+} from "./memory/merge.js";
+export type { ControlsMergeResult } from "./memory/merge.js";
 
 // Naming helpers -- slugify titles into filesystem-safe names
 export { slugify, safeSlug, displayName } from "./util/naming.js";
