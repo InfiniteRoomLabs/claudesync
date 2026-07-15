@@ -186,6 +186,28 @@ describe("mergeProjectMemoryControls", () => {
     const second = mergeProjectMemoryControls(baseHashes, local, remote);
     expect(second).toEqual(first);
   });
+
+  it("counts localDeletes once per distinct base entry, not per duplicate occurrence in remote", () => {
+    const e = "entry-a";
+    const result = mergeProjectMemoryControls([hashContent(e)], [], [e, e]);
+    expect(result.controls).toEqual([]);
+    expect(result.localAdds).toBe(0);
+    expect(result.localDeletes).toBe(1);
+    expect(result.remoteAdds).toBe(0);
+    expect(result.remoteDeletes).toBe(0);
+    expect(result.deduplicated).toBe(0);
+  });
+
+  it("counts remoteDeletes once per distinct base entry, not per duplicate occurrence in local", () => {
+    const e = "entry-a";
+    const result = mergeProjectMemoryControls([hashContent(e)], [e, e], []);
+    expect(result.controls).toEqual([]);
+    expect(result.localAdds).toBe(0);
+    expect(result.localDeletes).toBe(0);
+    expect(result.remoteAdds).toBe(0);
+    expect(result.remoteDeletes).toBe(1);
+    expect(result.deduplicated).toBe(0);
+  });
 });
 
 describe("assertNoDelimiterEntries", () => {

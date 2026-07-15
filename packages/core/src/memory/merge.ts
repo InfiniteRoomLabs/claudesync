@@ -24,9 +24,11 @@ export interface ControlsMergeResult {
   localAdds: number;
 
   /**
-   * Count of base entries that are still present in the remote's live
-   * controls but were removed from the local `edits.md`. Local deletion
-   * wins over a remote entry that is otherwise unchanged since the base.
+   * Count of distinct base entries that are still present in the remote's
+   * live controls but were removed from the local `edits.md`. Each distinct
+   * base entry is counted at most once, even if duplicate occurrences of that
+   * entry appear in the remote array. Local deletion wins over a remote entry
+   * that is otherwise unchanged since the base.
    */
   localDeletes: number;
 
@@ -39,9 +41,11 @@ export interface ControlsMergeResult {
   remoteAdds: number;
 
   /**
-   * Count of base entries that are still present in the local `edits.md`
-   * but are no longer present in the remote's live controls. Remote
-   * deletion wins over a stale local copy of that entry.
+   * Count of distinct base entries that are still present in the local
+   * `edits.md` but are no longer present in the remote's live controls.
+   * Each distinct base entry is counted at most once, even if duplicate
+   * occurrences of that entry appear in the local array. Remote deletion
+   * wins over a stale local copy of that entry.
    */
   remoteDeletes: number;
 
@@ -49,7 +53,8 @@ export interface ControlsMergeResult {
    * Count of entries dropped because their exact normalized text had
    * already been emitted into {@link ControlsMergeResult.controls} --
    * covers both sides adding identical text and duplicate occurrences
-   * within a single input array.
+   * within a single input array. Does not cover duplicate deletion counts
+   * (those are de-duplicated by distinct-entry hashing, not incremented here).
    */
   deduplicated: number;
 }
@@ -114,6 +119,8 @@ export function mergeProjectMemoryControls(
 
   const controls: string[] = [];
   const seen = new Set<string>();
+  const countedLocalDeletes = new Set<string>();
+  const countedRemoteDeletes = new Set<string>();
   let localAdds = 0;
   let localDeletes = 0;
   let remoteAdds = 0;
@@ -123,7 +130,10 @@ export function mergeProjectMemoryControls(
   for (const entry of normalizedRemote) {
     const hash = hashContent(entry);
     if (base.has(hash) && !localHashes.has(hash)) {
-      localDeletes += 1;
+      if (!countedLocalDeletes.has(hash)) {
+        localDeletes += 1;
+        countedLocalDeletes.add(hash);
+      }
       continue;
     }
     if (seen.has(entry)) {
@@ -141,7 +151,10 @@ export function mergeProjectMemoryControls(
     const hash = hashContent(entry);
     if (base.has(hash)) {
       if (!remoteHashes.has(hash)) {
-        remoteDeletes += 1;
+        if (!countedRemoteDeletes.has(hash)) {
+          remoteDeletes += 1;
+          countedRemoteDeletes.add(hash);
+        }
       }
       continue;
     }
