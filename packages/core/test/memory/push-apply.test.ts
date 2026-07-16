@@ -5,6 +5,7 @@ import path from "node:path";
 import { applyProjectMemoryPush } from "@core/memory/push.js";
 import { pullProjectMemory } from "@core/memory/pull.js";
 import { readMemoryState, MEMORY_STATE_FILENAME } from "@core/memory/state.js";
+import { parseEdits } from "@core/memory/edits.js";
 import type { ProjectMemory } from "@core/models/types.js";
 
 let dir: string;
@@ -244,6 +245,46 @@ describe("applyProjectMemoryPush", () => {
         now: "2026-07-15T00:00:00.000Z",
       }),
     ).rejects.toThrow(/lost|null|controls/i);
+  });
+
+  it("intentional clear: local override empties controls, PUT sends [], and a post-PUT verify GET reporting controls null is NOT an error -- it materializes the cleared state", async () => {
+    const d = mkdir();
+    // Sidecar base starts with one prior edit instruction, hashed into controls_base.
+    bootstrapPulled(d, "m1\n", ["entry-a"]);
+
+    // Opening GET: remote still matches the base exactly.
+    const openingRemote = remote("m1\n", ["entry-a"], "2026-07-15T05:00:00Z");
+    // Post-PUT verify GET: the server represents the now-empty controls list
+    // as null rather than [] -- this is the legitimate "zero edit
+    // instructions" representation, not a lost write.
+    const verifyRemote = remote("m1\n", null, "2026-07-15T06:00:00Z");
+    const { client, calls } = makeFakeClient([openingRemote, verifyRemote]);
+
+    const out = await applyProjectMemoryPush({
+      client,
+      orgId,
+      accountId,
+      projectId,
+      dir: d,
+      now: "2026-07-15T00:00:00.000Z",
+      localControlsOverride: [], // the "edits clear --apply" path
+    });
+
+    // PUT called exactly once, with the empty array.
+    const putCalls = calls.filter((c) => c.type === "put");
+    expect(putCalls).toHaveLength(1);
+    expect((putCalls[0] as { controls: string[] }).controls).toEqual([]);
+
+    expect(out.action).toBe("written");
+    expect(out.controlsCount).toBe(0);
+
+    // edits.md was materialized to the empty state.
+    const editsAfter = fs.readFileSync(path.join(d, "edits.md"), "utf-8");
+    expect(parseEdits(editsAfter)).toEqual([]);
+
+    // The sidecar's controls_base reflects the cleared list.
+    const state = readMemoryState(d)!;
+    expect(state.controls_base).toEqual([]);
   });
 
   it("first-edit PUT: memory generated, controls null, local one add -> PUT sends the add; a post-PUT GET still reporting controls null throws the reworded lost-or-unsupported error and leaves edits.md/controls_base untouched", async () => {

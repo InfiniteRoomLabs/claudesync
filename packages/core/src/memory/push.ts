@@ -435,19 +435,24 @@ function writeVerifyMismatchMemoryOnly(
  *    other error propagates to the caller unchanged, since the write may
  *    already have applied server-side and blind retry could double-apply it.
  * 6. After a successful `PUT`, `GET` again to verify. If the server reports
- *    `controls === null` here, the write did not visibly take effect --
- *    either the server lost the write, or (for a project pushing its first
- *    edit instruction, i.e. `plan.remoteControls` was empty because the
- *    opening GET's `controls` was null despite a generated memory doc) the
- *    server does not support initializing the edit list via this API for
- *    this project. Either way this throws rather than silently reporting
- *    success; nothing has been materialized at this point, so `edits.md` and
- *    the sidecar's `controls_base` are untouched and local edits are
- *    preserved. Otherwise, if the normalized returned controls exactly equal
- *    the plan's merged controls, the full snapshot is materialized
- *    (`source: "push"`, advancing `MEMORY.md`, `edits.md`, and the sidecar
- *    including `controls_base` and `last_push_at`) and the outcome is
- *    `"written"`.
+ *    `controls === null` here AND the sent `plan.mergedControls` was
+ *    non-empty, the write did not visibly take effect -- either the server
+ *    lost the write, or (for a project pushing its first edit instruction,
+ *    i.e. `plan.remoteControls` was empty because the opening GET's
+ *    `controls` was null despite a generated memory doc) the server does not
+ *    support initializing the edit list via this API for this project. That
+ *    case throws rather than silently reporting success; nothing has been
+ *    materialized at this point, so `edits.md` and the sidecar's
+ *    `controls_base` are untouched and local edits are preserved. A
+ *    `controls === null` verify GET after an intentionally *empty* send
+ *    (e.g. `edits clear --apply`) is NOT an error -- `null` is simply the
+ *    server's representation of "zero edit instructions" -- and is treated
+ *    identically to `controls: []` for the comparison below. Otherwise
+ *    (including that empty-send case), if the normalized returned controls
+ *    exactly equal the plan's merged controls, the full snapshot is
+ *    materialized (`source: "push"`, advancing `MEMORY.md`, `edits.md`, and
+ *    the sidecar including `controls_base` and `last_push_at`) and the
+ *    outcome is `"written"`.
  * 7. Otherwise (the verification GET's controls differ from what was sent --
  *    a hybrid verify-mismatch, most likely a concurrent external write
  *    racing this one): only `MEMORY.md` and a narrow slice of the sidecar
@@ -464,10 +469,13 @@ function writeVerifyMismatchMemoryOnly(
  * project-uuid/missing-edits/delimiter validation failures).
  * @throws Whatever `client.putProjectMemoryControls` throws, unmodified --
  * in particular a timeout's ambiguous-write error, which is never retried.
- * @throws Error if the post-write verification GET reports `controls === null`,
- * i.e. the write did not visibly take effect -- either the server lost it, or
- * it does not support initializing the edit list via this API for this
- * project. Local edits are preserved; nothing was materialized.
+ * @throws Error if the post-write verification GET reports `controls === null`
+ * AND the sent `plan.mergedControls` was non-empty, i.e. the write did not
+ * visibly take effect -- either the server lost it, or it does not support
+ * initializing the edit list via this API for this project. Local edits are
+ * preserved; nothing was materialized. A `controls === null` verify GET after
+ * an intentionally empty send (e.g. `edits clear --apply`) does NOT throw --
+ * `null` is the server's representation of zero edit instructions there.
  * @throws Whatever {@link withProjectMemoryLock} throws if the lock is
  * already held by another non-stale push.
  */
@@ -515,7 +523,7 @@ export async function applyProjectMemoryPush(
       await client.putProjectMemoryControls(orgId, projectId, plan.mergedControls, putOptions);
 
       const verifyRemote = await client.getProjectMemory(orgId, projectId);
-      if (verifyRemote.controls === null) {
+      if (verifyRemote.controls === null && plan.mergedControls.length > 0) {
         throw new Error(
           `applyProjectMemoryPush: project "${projectId}" reported no controls immediately after a successful ` +
             "write -- the server either lost the write or does not support initializing the edit list via API " +
@@ -524,12 +532,12 @@ export async function applyProjectMemoryPush(
         );
       }
 
-      const verifyNormalized = normalizeControls(verifyRemote.controls);
+      const verifyNormalized = normalizeControls(verifyRemote.controls ?? []);
       const prior = readMemoryState(dir);
 
       if (stringArraysEqual(verifyNormalized, plan.mergedControls)) {
         const materialized = materializeProjectMemorySnapshot({
-          remote: { ...verifyRemote, controls: verifyRemote.controls },
+          remote: { ...verifyRemote, controls: verifyRemote.controls ?? [] },
           prior,
           accountId,
           projectId,
@@ -556,7 +564,7 @@ export async function applyProjectMemoryPush(
         );
       }
       const { controlsCount, memoryChanged } = writeVerifyMismatchMemoryOnly(
-        { ...verifyRemote, controls: verifyRemote.controls },
+        { ...verifyRemote, controls: verifyRemote.controls ?? [] },
         prior,
         dir,
       );
