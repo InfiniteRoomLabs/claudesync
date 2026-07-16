@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Project memory PUSH (Phase 2).** New SDK write `putProjectMemoryControls`
+  (90 s timeout, no retry -- a retry could double-apply or stack two ~57 s
+  server-side regenerations) and `getAccount`, a three-way controls merge, and
+  a push planner/apply engine that merges local `edits.md` against a fresh
+  remote read before every `PUT` (never a blind whole-array replace), verifies
+  the write with a follow-up read after it lands (hybrid post-PUT verify:
+  materializes on a confirmed match, preserves `edits.md` and the merge base
+  on a mismatch so nothing is silently lost), and holds a per-project advisory
+  lock for the duration so a user re-running a push that looks stuck cannot
+  race itself. New CLI `projects memory push`, `edits clear`, and
+  `--adopt-legacy-principal`; a gated MCP `put_project_memory_controls` tool
+  (only registered when launched with
+  `CLAUDESYNC_MCP_WRITE_SCOPE=project-memory`). All project-memory commands
+  (`pull`, `status`, `push`) now derive their principal from the account uuid
+  (via a new `getAccount` read), replacing the org-scoped principal from
+  Phase 1. See
+  `docs/superpowers/specs/2026-07-13-project-memory-sync-design.md`.
 - **Project memory pull (Phase 1).** New SDK `getProjectMemory` read, a
   `packages/core/src/memory/` module (canonicalization, `edits.md`
   serialization, hash sidecar, idempotent + atomic pull engine with a full
@@ -174,16 +191,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--preserve` now rescues project-nested conversation files.** `--preserve` globs are matched relative to the directory being rewritten. For project exports that directory is the project root, but conversation files live under `conversations/<slug>/`, so a bare `--preserve INDEX.md` only protected the project-root `INDEX.md` and silently dropped every nested conversation's `INDEX.md` on re-sync. `writeProjectBundle` now expands each preserve pattern with a globstar-prefixed variant (via the new `expandPreserveForProject` core export) so a bare pattern applies at the project root and at any nesting depth. Standalone-conversation exports are unaffected.
 
 ### Added
-- Conversation `model` is now persisted to `.claudesync-state.json` (nullable, backward-compatible — no `schema_version` bump). This lights up the existing "Model changed: X -> Y" changelog diff, which previously could never fire because the prior model was never stored. Note: only standalone conversations get a per-conversation state file; project-nested conversations still record their model via `README.md` only.
-- New core export `expandPreserveForProject()` — expands `--preserve` globs for the project-bundle scope.
+- Conversation `model` is now persisted to `.claudesync-state.json` (nullable, backward-compatible -- no `schema_version` bump). This lights up the existing "Model changed: X -> Y" changelog diff, which previously could never fire because the prior model was never stored. Note: only standalone conversations get a per-conversation state file; project-nested conversations still record their model via `README.md` only.
+- New core export `expandPreserveForProject()` -- expands `--preserve` globs for the project-bundle scope.
 
 ## [0.6.0] - 2026-05-12
 
 ### Added
-- `--preserve <glob>` repeatable flag on `export` and `export-all`. Preserves locally-added files inside the conversation/project directory across re-syncs in `--format files`. Pattern is a POSIX-style glob (single-segment `*`, multi-segment `**`, `?`, `[]` classes — no brace expansion, no extglob) matched against paths relative to the directory being rewritten. `CHANGELOG.md` continues to be preserved unconditionally. Examples: `--preserve INDEX.md`, `--preserve 'notes/**'`, `--preserve '*.local.md'`.
-- New core export `replaceWithPreserve()` — the stash-and-rebuild primitive that powers preservation. Available to SDK consumers that build their own file-mode exporters.
-- New core export `walkRelative()` — generator that yields POSIX-relative paths under a root.
-- New core exports `matchGlob` / `matchAnyGlob` / `compileGlob` — zero-dep glob matcher safe for relative path matching. Not a full minimatch replacement.
+- `--preserve <glob>` repeatable flag on `export` and `export-all`. Preserves locally-added files inside the conversation/project directory across re-syncs in `--format files`. Pattern is a POSIX-style glob (single-segment `*`, multi-segment `**`, `?`, `[]` classes -- no brace expansion, no extglob) matched against paths relative to the directory being rewritten. `CHANGELOG.md` continues to be preserved unconditionally. Examples: `--preserve INDEX.md`, `--preserve 'notes/**'`, `--preserve '*.local.md'`.
+- New core export `replaceWithPreserve()` -- the stash-and-rebuild primitive that powers preservation. Available to SDK consumers that build their own file-mode exporters.
+- New core export `walkRelative()` -- generator that yields POSIX-relative paths under a root.
+- New core exports `matchGlob` / `matchAnyGlob` / `compileGlob` -- zero-dep glob matcher safe for relative path matching. Not a full minimatch replacement.
 
 ### Fixed
 - **`export-all` no longer wipes locally-added files inside project directories.** `writeProjectBundle()` previously did an unconditional `rmSync(outputPath)` before writing, deleting any non-bundle file (downstream indexer output, hand-written notes, etc.). Both the standalone-conversation path (`writeFilesMode`) and the project path (`writeProjectBundle`) now route through the new `replaceWithPreserve` helper. Without `--preserve` flags the only behavior change is that the rescue mechanism now exists.
