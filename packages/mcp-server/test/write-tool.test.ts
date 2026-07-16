@@ -310,4 +310,74 @@ describe("put_project_memory_controls handler", () => {
     expect(calls.filter((c) => c.type === "put")).toHaveLength(1);
     expect(calls.filter((c) => c.type === "get")).toHaveLength(2);
   });
+
+  it("first-edit from null controls: null -> entry-a", async () => {
+    const openingRemote = remote("# synthetic doc\n", null, "T1");
+    const verifyRemote = remote("# synthetic doc\n", ["entry-a"], "T2");
+    const { client: fakeClient, calls } = makeFakeClient([openingRemote, verifyRemote]);
+    const client = await connect({ auth: makeFakeAuth(), client: fakeClient, memoryWriteEnabled: true });
+
+    const result = await callPut(client, {
+      projectId,
+      confirmProjectId: projectId,
+      orgId,
+      expectedUpdatedAt: "T1",
+      baseControls: [],
+      desiredControls: ["entry-a"],
+    });
+
+    expect(result.isError).toBeFalsy();
+    const putCalls = calls.filter((c): c is Extract<RecordedCall, { type: "put" }> => c.type === "put");
+    expect(putCalls).toHaveLength(1);
+    expect(putCalls[0].controls).toEqual(["entry-a"]);
+    const parsed = jsonOf(result);
+    expect(parsed.action).toBe("written");
+    expect(parsed.controls_count).toBe(1);
+  });
+
+  it("clear-all with null verify is NOT an error", async () => {
+    const openingRemote = remote("# synthetic doc\n", ["entry-a"], "T1");
+    const verifyRemote = remote("# synthetic doc\n", null, "T2");
+    const { client: fakeClient, calls } = makeFakeClient([openingRemote, verifyRemote]);
+    const client = await connect({ auth: makeFakeAuth(), client: fakeClient, memoryWriteEnabled: true });
+
+    const result = await callPut(client, {
+      projectId,
+      confirmProjectId: projectId,
+      orgId,
+      expectedUpdatedAt: "T1",
+      baseControls: ["entry-a"],
+      desiredControls: [],
+    });
+
+    expect(result.isError).toBeFalsy();
+    const putCalls = calls.filter((c): c is Extract<RecordedCall, { type: "put" }> => c.type === "put");
+    expect(putCalls).toHaveLength(1);
+    expect(putCalls[0].controls).toEqual([]);
+    const parsed = jsonOf(result);
+    expect(parsed.action).toBe("written");
+    expect(parsed.controls_count).toBe(0);
+  });
+
+  it("error paths leak no control text", async () => {
+    const marker = "SECRET-MARKER";
+    const openingRemote = remote("# synthetic doc\n", [`${marker}-entry`], "T1");
+    const { client: fakeClient } = makeFakeClient([openingRemote]);
+    const client = await connect({ auth: makeFakeAuth(), client: fakeClient, memoryWriteEnabled: true });
+
+    const result = await callPut(client, {
+      projectId,
+      confirmProjectId: projectId,
+      orgId,
+      expectedUpdatedAt: "T2", // stale: live remote is at T1
+      baseControls: [`${marker}-entry`],
+      desiredControls: [`${marker}-desired`],
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? "";
+    expect(text).not.toContain(marker);
+    expect(text).not.toContain("entry");
+    expect(text).not.toContain("desired");
+  });
 });
