@@ -86,10 +86,20 @@ export const ENDPOINTS = {
    * edit list. Only the `project_uuid` query parameter selects the project;
    * other names silently fall back to account-level memory (spike-confirmed).
    * @param orgId - Organization UUID.
-   * @param projectId - Project UUID, sent as `project_uuid`.
+   * @param projectId - Project UUID, sent as `project_uuid` (URL-encoded).
    */
   memory: (orgId: string, projectId: string) =>
-    `/api/organizations/${orgId}/memory?project_uuid=${projectId}`,
+    `/api/organizations/${orgId}/memory?project_uuid=${encodeURIComponent(projectId)}`,
+  /**
+   * A project's memory `controls` edit list, as a write target. `PUT`ing here
+   * with `{ controls: string[] }` replaces the server's edit list; the request
+   * runs synchronously for roughly 57 seconds while the server regenerates the
+   * memory doc from the new controls.
+   * @param orgId - Organization UUID.
+   * @param projectId - Project UUID, sent as `project_uuid` (URL-encoded).
+   */
+  memoryControls: (orgId: string, projectId: string) =>
+    `/api/organizations/${orgId}/memory/controls?project_uuid=${encodeURIComponent(projectId)}`,
 
   // Artifacts (wiggle filesystem)
 

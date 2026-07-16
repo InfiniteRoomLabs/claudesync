@@ -1,6 +1,23 @@
 import { z } from "zod";
 
 /**
+ * Validates an account (per-user principal) record from the claude.ai web API.
+ *
+ * The account is identified by its {@link AccountSchema.uuid} (account-specific,
+ * not org-scoped like {@link OrganizationSchema}). Other fields like `email_address`
+ * are optional / passthrough for forward compatibility. `.passthrough()` keeps any
+ * unrecognized fields the API adds later rather than stripping them.
+ */
+export const AccountSchema = z
+  .object({
+    /** Stable account identifier; used as the principal for account-level actions (e.g. project memory push). */
+    uuid: z.string(),
+    /** Email address associated with the account, when present. */
+    email_address: z.string().optional(),
+  })
+  .passthrough();
+
+/**
  * Validates an organization (workspace/team) record from the claude.ai web API.
  *
  * `capabilities` and `active_flags` default to empty arrays so callers can read
@@ -251,15 +268,20 @@ export const ProjectDocSchema = z
 /**
  * A project's memory payload from `GET .../memory?project_uuid=`. `controls` is
  * the ordered edit-instruction list (plain strings, no server IDs); it is
- * `null` for a project whose memory has never been generated. `memory` is the
- * generated markdown doc ("" when ungenerated). `.passthrough()` keeps unknown
- * fields for forward compatibility.
+ * `null` whenever the project has ZERO edit instructions -- including projects
+ * with a fully generated memory doc that simply has never been edited. Only
+ * `memory === ""` signals a never-generated project. `.passthrough()` keeps
+ * unknown fields for forward compatibility.
  */
 export const ProjectMemorySchema = z
   .object({
     /** Server-generated markdown memory document; "" if never generated. */
     memory: z.string(),
-    /** Ordered edit-instruction list; null if memory was never generated. */
+    /**
+     * Ordered edit-instruction list. `null` means the project has no edit
+     * instructions (verified live: coexists with a generated `memory` doc);
+     * it does NOT by itself mean memory was never generated.
+     */
     controls: z.array(z.string()).nullable(),
     /** ISO 8601 last-generation timestamp; null if never generated. */
     updated_at: z.string().nullable(),

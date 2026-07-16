@@ -26,6 +26,11 @@ describe("ClaudeSyncClient", () => {
     expect(client).toBeDefined();
   });
 
+  it("exposes getAccount method", () => {
+    const client = new ClaudeSyncClient(createMockAuth());
+    expect(typeof client.getAccount).toBe("function");
+  });
+
   it("exposes listOrganizations method", () => {
     const client = new ClaudeSyncClient(createMockAuth());
     expect(typeof client.listOrganizations).toBe("function");
@@ -55,6 +60,46 @@ describe("ClaudeSyncClient", () => {
     const client = new ClaudeSyncClient(createMockAuth());
     expect(typeof client.listArtifacts).toBe("function");
     expect(typeof client.downloadArtifact).toBe("function");
+  });
+});
+
+describe("getAccount", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("fetches and parses account from ENDPOINTS.account", async () => {
+    const mockAccount = {
+      uuid: "acct-test-uuid",
+      email_address: "test@example.com",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(mockAccount)))
+    );
+
+    const client = new ClaudeSyncClient(createMockAuth(), { rateLimitDelayMs: 0 });
+    const account = await client.getAccount();
+
+    expect(account.uuid).toBe("acct-test-uuid");
+    expect(account.email_address).toBe("test@example.com");
+  });
+
+  it("passes through unknown account fields", async () => {
+    const mockAccount = {
+      uuid: "acct-uuid-456",
+      email_address: "another@example.com",
+      future_field: "future_value",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(mockAccount)))
+    );
+
+    const client = new ClaudeSyncClient(createMockAuth(), { rateLimitDelayMs: 0 });
+    const account = await client.getAccount();
+
+    expect((account as Record<string, unknown>).future_field).toBe("future_value");
   });
 });
 

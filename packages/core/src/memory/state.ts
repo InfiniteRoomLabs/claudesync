@@ -29,8 +29,16 @@ export const MemoryStateSchema = z.object({
   controls_base: z.array(z.string()),
   /** sha256 of the canonical snapshot (memory hash + ordered control hashes). */
   remote_snapshot_sha256: z.string(),
-  /** Wall-clock time of the last pull (ISO 8601). */
-  last_pull_at: z.string(),
+  /**
+   * Wall-clock time of the last pull (ISO 8601). Optional so a directory
+   * that has only ever been pushed to (never pulled) has a valid sidecar.
+   */
+  last_pull_at: z.string().optional(),
+  /**
+   * Wall-clock time of the last push (ISO 8601). Optional so existing
+   * Phase 1 sidecars, written before push existed, still parse.
+   */
+  last_push_at: z.string().optional(),
   /** Server `updated_at` seen at last pull; null if the project had no memory. */
   remote_updated_at: z.string().nullable(),
 });

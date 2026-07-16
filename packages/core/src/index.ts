@@ -27,12 +27,13 @@ export { AuthError } from "./auth/errors.js";
 
 // Client -- the claude.ai HTTP client, its options, errors, and endpoint helpers
 export { ClaudeSyncClient } from "./client/client.js";
-export type { ClientOptions } from "./client/client.js";
+export type { ClientOptions, PutProjectMemoryControlsOptions } from "./client/client.js";
 export { ClaudeSyncError, RateLimitError } from "./client/errors.js";
 export { ENDPOINTS, buildUrl } from "./client/endpoints.js";
 
 // Models -- Zod schemas validating each claude.ai API response shape
 export {
+  AccountSchema,
   OrganizationSchema,
   ConversationSettingsSchema,
   AttachmentSchema,
@@ -50,6 +51,7 @@ export {
 
 // Models -- Types inferred from the schemas above
 export type {
+  Account,
   Organization,
   ConversationSettings,
   Attachment,
@@ -178,6 +180,20 @@ export { readMemoryState, writeMemoryState, MEMORY_STATE_FILENAME } from "./memo
 export type { MemoryState } from "./memory/state.js";
 export { canonicalize, serializeEdits, parseEdits } from "./memory/edits.js";
 export { hashContent } from "./memory/hash.js";
+export {
+  mergeProjectMemoryControls,
+  assertNoDelimiterEntries,
+} from "./memory/merge.js";
+export type { ControlsMergeResult } from "./memory/merge.js";
+export { withProjectMemoryLock, MEMORY_LOCK_FILENAME } from "./memory/lock.js";
+export type { WithProjectMemoryLockOptions } from "./memory/lock.js";
+export { planProjectMemoryPush, applyProjectMemoryPush } from "./memory/push.js";
+export type {
+  PlanProjectMemoryPushOptions,
+  ProjectMemoryPushPlan,
+  ApplyProjectMemoryPushOptions,
+  ProjectMemoryPushOutcome,
+} from "./memory/push.js";
 
 // Naming helpers -- slugify titles into filesystem-safe names
 export { slugify, safeSlug, displayName } from "./util/naming.js";
