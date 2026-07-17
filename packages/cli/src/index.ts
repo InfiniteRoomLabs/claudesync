@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createRequire } from "node:module";
 import { Command } from "commander";
 import { AuthError, ClaudeSyncError, RateLimitError } from "@infinite-room-labs/claudesync-core";
 import { lsCommand } from "./commands/ls.js";
@@ -8,12 +9,19 @@ import { searchCommand } from "./commands/search.js";
 import { exportAllCommand } from "./commands/export-all.js";
 import { claudeCodeCommand } from "./commands/claude-code.js";
 
+/**
+ * The package's own version, read from `package.json` at startup so
+ * `claudesync --version` can never drift from the published version again
+ * (it was hardcoded and stuck at 0.8.0 through two releases).
+ */
+const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
+
 const program = new Command();
 
 program
   .name("claudesync")
   .description("ClaudeSync -- Export claude.ai conversations as git repositories")
-  .version("0.8.0");
+  .version(version);
 
 program.addCommand(lsCommand);
 program.addCommand(exportCommand);

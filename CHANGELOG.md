@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-07-17
+
+### Fixed
+- **`claudesync --version` reported a stale hardcoded version** (stuck at 0.8.0 since that release). The CLI now reads its version from `package.json` at startup, so it can never drift from the published version again. Caught by dogfooding the 0.10.0 wrapper upgrade.
+
 ## [0.10.0] - 2026-07-16
 
 ### Added
