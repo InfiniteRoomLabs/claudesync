@@ -411,9 +411,13 @@ remove_sync_block() {
 # Install the claudesync shell function to the user's rc file or fish functions dir.
 install_synchronizer() {
     _ref="$(resolve_ref "${IMAGE_SYNC}" "${VER_SYNC}")"
+    # die() inside $() only exits the subshell -- guard against an empty ref
+    # reaching the template writer (would install a broken wrapper silently).
+    [ -n "${_ref}" ] || die "Could not resolve an image ref for ${IMAGE_SYNC} (transient registry error?). Re-run the installer."
     info "Installing synchronizer (image ref: ${_ref}) ..."
     if ! pull_or_detect "${_ref}"; then
         _ref="$(resolve_ref "${IMAGE_SYNC}" "${VER_SYNC}")"   # PIN_DIGEST now on -> digest
+        [ -n "${_ref}" ] || die "Could not re-resolve an image ref for ${IMAGE_SYNC}. Re-run the installer."
         info "Re-resolved to ${_ref}"
         run docker pull "${_ref}" >/dev/null 2>&1 || warn "Could not pre-pull ${_ref} (will pull on first use)."
     fi
@@ -477,9 +481,12 @@ uninstall_synchronizer() {
 # Install the MCP wrapper script to BIN_DIR and configure the MCP client.
 install_mcp() {
     _ref="$(resolve_ref "${IMAGE_MCP}" "${VER_MCP}")"
+    # See install_synchronizer: die() in $() cannot abort the parent shell.
+    [ -n "${_ref}" ] || die "Could not resolve an image ref for ${IMAGE_MCP} (transient registry error?). Re-run the installer."
     info "Installing MCP wrapper (image ref: ${_ref}) ..."
     if ! pull_or_detect "${_ref}"; then
         _ref="$(resolve_ref "${IMAGE_MCP}" "${VER_MCP}")"
+        [ -n "${_ref}" ] || die "Could not re-resolve an image ref for ${IMAGE_MCP}. Re-run the installer."
         info "Re-resolved to ${_ref}"
         run docker pull "${_ref}" >/dev/null 2>&1 || warn "Could not pre-pull ${_ref} (will pull on first use)."
     fi

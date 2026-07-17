@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Installer could silently write a broken shell wrapper with an empty image ref.** `resolve_ref` failures inside command substitution could not abort the installer (`die` in `$()` only exits the subshell), so a transient registry error produced a wrapper whose `docker run` had no image. Both install paths now hard-fail with a clear re-run message instead. Caught by dogfooding the 0.10.1 wrapper upgrade.
+
 ## [0.10.1] - 2026-07-17
 
 ### Fixed
