@@ -40,8 +40,39 @@ describe("renameConversation", () => {
       "https://claude.ai/api/organizations/org-123/chat_conversations/chat-456"
     );
     expect(init.method).toBe("PUT");
-    expect(init.headers).toMatchObject({ "content-type": "application/json" });
+    expect(new Headers(init.headers).get("content-type")).toBe(
+      "application/json"
+    );
     expect(init.body).toBe(JSON.stringify({ name: "New Title" }));
+  });
+
+  it("merges the lowercase content-type from the caller with the auth headers case-insensitively, without duplicating content-type", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ uuid: "chat-456", name: "New Title", summary: "" }),
+          { status: 202 }
+        )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client().renameConversation("org-123", "chat-456", "New Title");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentHeaders = new Headers(init.headers);
+
+    // Exactly one content-type value, and it is not a comma-joined
+    // duplicate of "application/json" from a case-insensitive collision
+    // between the auth provider's "Content-Type" and the caller's
+    // lowercase "content-type".
+    const contentType = sentHeaders.get("content-type");
+    expect(contentType).toBe("application/json");
+    expect(contentType).not.toContain(",");
+
+    // The auth-provided Cookie header must survive the merge -- the
+    // caller's content-type must not wipe unrelated auth headers.
+    expect(sentHeaders.get("cookie")).toBe("test-cookie");
   });
 
   it("resolves void on a 202 response with the updated conversation summary body", async () => {

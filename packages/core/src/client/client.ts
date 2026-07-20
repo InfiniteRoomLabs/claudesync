@@ -127,9 +127,15 @@ export class ClaudeSyncClient {
    * cross-cutting concern shared by all HTTP calls on this client: limiter slot
    * acquisition, auth-header injection, 429 mapping, and non-2xx mapping.
    *
-   * `init.headers` (if given) is layered on top of the auth headers, so a
-   * caller can add e.g. `content-type` without losing the session cookie.
-   * {@link ClaudeSyncClient.request} and {@link ClaudeSyncClient.requestRaw} are
+   * `init.headers` (if given) is layered on top of the auth headers using a
+   * {@link Headers} instance, so the merge is case-insensitive: a caller
+   * setting `content-type` replaces an auth-provider `Content-Type` (or vice
+   * versa) instead of both surviving as duplicate header entries -- `fetch`
+   * would otherwise join same-name headers with a comma (e.g.
+   * `application/json, application/json`), which claude.ai's API rejects
+   * with a 400. Auth headers not overridden by the caller (e.g. `Cookie`)
+   * always survive the merge. {@link ClaudeSyncClient.request} and
+   * {@link ClaudeSyncClient.requestRaw} are
    * both thin wrappers over this method; every other client method funnels
    * through one of those two, so this is the single choke point for transport
    * behavior.
@@ -149,7 +155,12 @@ export class ClaudeSyncClient {
     await this.limiter.acquireRequestSlot();
 
     const authHeaders = await this.auth.getHeaders();
-    const headers = { ...authHeaders, ...(init?.headers as Record<string, string> | undefined) };
+    const headers = new Headers(authHeaders as Record<string, string>);
+    if (init?.headers) {
+      new Headers(init.headers as HeadersInit).forEach((value, key) => {
+        headers.set(key, value);
+      });
+    }
     const response = await fetch(url, { ...init, headers });
 
     if (response.status === 429) {
