@@ -1,6 +1,6 @@
 # Skip Empty Conversations -- Design
 
-Status: reviewed (multi-model /deliberate panel 2026-07-16, full participation) and revised per its findings plus user decisions. Supersedes the one-paragraph draft.
+Status: IMPLEMENTED 2026-07-20 (7-task subagent-driven run on feat/skip-empty-conversations; live-smoked read-only against the real org). Design was reviewed by a multi-model /deliberate panel 2026-07-16 (full participation) and revised per its findings plus user decisions. Implementation deviations from this spec: none of substance; notable clarifications -- (1) the became-empty policy for PROJECT bundle conversations uses the on-disk subtree as the prior-state proxy (project bundles have no per-conversation sidecar) and `retain` preserves subtrees via preserve-glob injection into the rebuild; (2) json-format project output has no subtree, so the policy is effectively skip-only there; (3) with a small `--limit`, ls's hidden-count notice reflects only scanned candidates (documented behavior).
 
 ## Problem
 
