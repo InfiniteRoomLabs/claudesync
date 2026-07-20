@@ -9,6 +9,10 @@ function createMockAuth(): AuthProvider {
     getHeaders: async () => ({
       Cookie: "test-cookie",
       "User-Agent": "test-agent",
+      // Mirrors the REAL providers (EnvAuth/FirefoxProfileAuth), which send a
+      // capitalized Content-Type. Without this, the duplicate-header regression
+      // tests cannot reproduce the case-collision the fix guards against.
+      "Content-Type": "application/json",
     }),
     getOrganizationId: async () => "org-123",
   };
