@@ -121,6 +121,7 @@ export {
 export type {
   FetchAndBuildOptions,
   FetchAndBuildResult,
+  FetchAndBuildEmpty,
 } from "./sync/fetch.js";
 export { fetchAndBuild } from "./sync/fetch.js";
 export type { ReplaceWithPreserveOptions } from "./sync/files-mode.js";
