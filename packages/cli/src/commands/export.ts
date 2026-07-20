@@ -7,6 +7,9 @@ import {
   sync,
   safeSlug,
   displayName,
+  resolveBehaviorConfig,
+  type BehaviorConfig,
+  type OnBecameEmpty,
   type ExportFormat,
   type ItemRef,
 } from "@infinite-room-labs/claudesync-core";
@@ -35,6 +38,14 @@ export const exportCommand = new Command("export")
     (value: string, previous: string[] = []) => previous.concat(value),
     [] as string[],
   )
+  .option(
+    "--include-empty",
+    "Export a conversation with no human messages instead of skipping it. Env: CLAUDESYNC_SKIP_EMPTY_CONVERSATIONS"
+  )
+  .option(
+    "--on-became-empty <policy>",
+    "Policy for a previously-exported conversation that has since become empty: sync (default, re-materializes and records the deletion), retain (keeps the existing output untouched), or clean (removes the generated output). Env: CLAUDESYNC_ON_BECAME_EMPTY"
+  )
   .action(async (
     conversationId: string,
     options: {
@@ -47,11 +58,25 @@ export const exportCommand = new Command("export")
       skipExisting?: boolean;
       skipSame?: boolean;
       preserve: string[];
+      includeEmpty?: boolean;
+      onBecameEmpty?: string;
     }
   ) => {
     if (options.skipSame && options.skipExisting) {
       console.error("error: --skip-same and --skip-existing are mutually exclusive");
       process.exit(1);
+    }
+
+    let behaviorConfig: BehaviorConfig;
+    try {
+      behaviorConfig = resolveBehaviorConfig({
+        skipEmptyConversations: options.includeEmpty ? false : undefined,
+        onBecameEmpty: options.onBecameEmpty as OnBecameEmpty | undefined,
+      });
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+      return; // unreachable after process.exit, helps the type narrower
     }
 
     const { auth, client } = createClient();
@@ -99,6 +124,8 @@ export const exportCommand = new Command("export")
       skipSame: options.skipSame,
       skipExisting: options.skipExisting,
       preserve: options.preserve,
+      skipEmpty: behaviorConfig.skipEmptyConversations,
+      onBecameEmpty: behaviorConfig.onBecameEmpty,
     });
 
     if (!result) return;
@@ -110,6 +137,11 @@ export const exportCommand = new Command("export")
       case "skipped-existing":
         console.log(`Skipped (exists): ${result.reason}`);
         break;
+      case "skipped-empty":
+        console.log(
+          `Conversation has no human messages -- skipped. Re-run with --include-empty to export it.`
+        );
+        break;
       case "full":
         console.log(`Initial export complete.`);
         break;
@@ -117,6 +149,14 @@ export const exportCommand = new Command("export")
         console.log(
           `Incremental sync complete${result.changelogWritten ? " (CHANGELOG updated)" : ""}.`,
         );
+        break;
+      case "retained-stale":
+        console.log(
+          `Conversation became empty -- existing output kept untouched (state frozen).`
+        );
+        break;
+      case "cleaned-empty":
+        console.log(`Conversation became empty -- generated output removed.`);
         break;
     }
   });
