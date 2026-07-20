@@ -1,6 +1,6 @@
 # Resolve Unnamed Conversations -- Design
 
-Status: reviewed (multi-model /deliberate panel 2026-07-16, full participation) and revised per its findings plus user decisions. Supersedes the one-paragraph draft. The panel's blocking finding (local-derived paths break incremental sync) is resolved by narrowing v1: local paths follow the remote name, period.
+Status: IMPLEMENTED 2026-07-20 (6-task subagent-driven run on feat/resolve-unnamed-conversations; live acceptance: derived title applied to the blessed conversation via `--apply` and rolled back to unnamed). Design was reviewed by a multi-model /deliberate panel 2026-07-16 (full participation) and revised per its findings plus user decisions; the panel's blocking finding (local-derived paths break incremental sync) was resolved by narrowing v1: local paths follow the remote name, period. Implementation notes: the live acceptance run exposed and fixed a pre-existing SDK-wide bug (case-duplicated Content-Type header broke every write path with a 400); the unresolved-reason label for assistant-only-active-branch conversations renders as "no usable opener" in the CLI table (raw reasons preserved in --json).
 
 ## Problem
 
