@@ -2,6 +2,7 @@ import { z } from "zod";
 import { homedir } from "node:os";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { OnBecameEmpty } from "../sync/empty.js";
 
 /**
  * Concurrency / backpressure configuration for parallel org sync. Validated with
@@ -173,4 +174,104 @@ export function resolveConcurrencyConfig(
         envNum(env, "CLAUDESYNC_MAX_RETRIES") ?? base.request.maxRetries,
     },
   });
+}
+
+/**
+ * Behavior settings for how the sync engine treats empty conversations (no
+ * human turns). Validated with zod and `.passthrough()` so unknown keys in a
+ * user's config file are tolerated (forward-compat with future options).
+ */
+export const BehaviorConfigSchema = z
+  .object({
+    /** When true, conversations with zero human turns are skipped on list-scan
+     * rather than fetched and materialized. */
+    skipEmptyConversations: z.boolean().default(true),
+    /** Policy applied to a previously-exported conversation that has since
+     * become empty; see {@link OnBecameEmpty} for the meaning of each value. */
+    onBecameEmpty: z.enum(["sync", "retain", "clean"]).default("sync"),
+  })
+  .passthrough();
+
+/** Validated, fully-defaulted behavior config; inferred from {@link BehaviorConfigSchema}. */
+export type BehaviorConfig = z.infer<typeof BehaviorConfigSchema>;
+
+/**
+ * CLI flag values that override config file and env values in
+ * {@link resolveBehaviorConfig}. Both fields are optional so an unset flag
+ * falls through to the next precedence tier instead of overriding it; an
+ * explicit `false`/value is preserved because the merge uses `??`, not a
+ * truthiness check.
+ */
+export interface BehaviorFlags {
+  /** Overrides `skipEmptyConversations`. */
+  skipEmptyConversations?: boolean;
+  /** Overrides `onBecameEmpty`. */
+  onBecameEmpty?: OnBecameEmpty;
+}
+
+/**
+ * Parse a boolean environment variable with a tolerant, case-insensitive
+ * spelling set.
+ *
+ * @param env - Environment map to read from.
+ * @param key - Variable name to look up.
+ * @returns `true` for `"1"`, `"true"`, or `"yes"`; `false` for `"0"`,
+ *   `"false"`, or `"no"` (case-insensitive); `undefined` when the variable is
+ *   unset or empty.
+ * @throws {Error} When the variable is set to a value outside the accepted
+ *   spellings -- invalid values fail loudly rather than silently defaulting.
+ */
+export function envBool(env: NodeJS.ProcessEnv, key: string): boolean | undefined {
+  const raw = env[key];
+  if (raw == null || raw === "") return undefined;
+  const normalized = raw.toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no") {
+    return false;
+  }
+  throw new Error(
+    `Invalid boolean value for ${key}: "${raw}" (expected one of 1/true/yes or 0/false/no)`
+  );
+}
+
+/**
+ * Resolve the effective behavior config by merging all sources by
+ * precedence: CLI flag > env var > config file > built-in default. Each
+ * field is resolved independently via a `??` chain, so an explicit `false`
+ * (flag or env) beats a `true` from a lower-precedence source, while an
+ * absent (`undefined`) flag falls through without overriding env or file.
+ * The merged result is re-parsed through {@link BehaviorConfigSchema}, so an
+ * invalid `onBecameEmpty` value from any source (file, env, or flag) throws
+ * rather than silently coercing to a default.
+ *
+ * @param flags - CLI flags (highest precedence); defaults to none.
+ * @param env - Environment map read for `CLAUDESYNC_*` overrides; defaults to
+ *   `process.env`.
+ * @param file - Raw parsed config object; defaults to {@link loadConfigFile}.
+ * @returns A validated, fully-populated {@link BehaviorConfig}.
+ * @throws {Error} When `envBool` rejects `CLAUDESYNC_SKIP_EMPTY_CONVERSATIONS`,
+ *   or when the resolved `onBecameEmpty` value is not one of `"sync"`,
+ *   `"retain"`, or `"clean"`.
+ */
+export function resolveBehaviorConfig(
+  flags: BehaviorFlags = {},
+  env: NodeJS.ProcessEnv = process.env,
+  file: Record<string, unknown> = loadConfigFile()
+): BehaviorConfig {
+  // Validate the file (fills defaults, throws on an invalid onBecameEmpty)
+  // before layering env/flags on top.
+  const base = BehaviorConfigSchema.parse(file);
+
+  const skipEmptyConversations =
+    flags.skipEmptyConversations ??
+    envBool(env, "CLAUDESYNC_SKIP_EMPTY_CONVERSATIONS") ??
+    base.skipEmptyConversations;
+
+  const onBecameEmpty =
+    flags.onBecameEmpty ?? env["CLAUDESYNC_ON_BECAME_EMPTY"] ?? base.onBecameEmpty;
+
+  // Re-parse so an invalid onBecameEmpty from env or flags throws here too.
+  return BehaviorConfigSchema.parse({ skipEmptyConversations, onBecameEmpty });
 }

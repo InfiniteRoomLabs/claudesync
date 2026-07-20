@@ -157,6 +157,10 @@ export {
   resolveConcurrencyConfig,
 } from "./config/index.js";
 
+// Behavior config -- skip-empty-conversations and became-empty policy settings
+export type { BehaviorConfig } from "./config/index.js";
+export { BehaviorConfigSchema, resolveBehaviorConfig } from "./config/index.js";
+
 // Parallel org sync -- whole-org scheduler and per-project bundle assembly
 export type {
   ProgressEvent,
