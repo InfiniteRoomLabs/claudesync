@@ -125,6 +125,8 @@ export type {
 export { fetchAndBuild } from "./sync/fetch.js";
 export type { ReplaceWithPreserveOptions } from "./sync/files-mode.js";
 export { replaceWithPreserve, walkRelative, expandPreserveForProject } from "./sync/files-mode.js";
+export type { OnBecameEmpty, EmptyAction } from "./sync/empty.js";
+export { isEmptyConversation, summaryLooksEmpty, decideEmptyAction } from "./sync/empty.js";
 
 // Concurrency / backpressure -- rate limiter, adaptive controller, worker pool
 export type {
