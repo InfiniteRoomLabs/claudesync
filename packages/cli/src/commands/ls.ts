@@ -26,14 +26,22 @@ export const lsCommand = new Command("ls")
     json?: boolean;
     query?: string;
   }) => {
+    // Resolve config before any network work so a malformed env/config value
+    // fails cleanly (same pattern as export/export-all).
+    let skipEmpty: boolean;
+    try {
+      skipEmpty = resolveBehaviorConfig({
+        skipEmptyConversations: options.includeEmpty ? false : undefined,
+      }).skipEmptyConversations;
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+      return; // unreachable after process.exit, helps the type narrower
+    }
+
     const { auth, client } = createClient();
     const orgId = await resolveOrgId(auth, options.org);
     const limit = parseInt(options.limit, 10);
-
-    const behaviorConfig = resolveBehaviorConfig({
-      skipEmptyConversations: options.includeEmpty ? false : undefined,
-    });
-    const skipEmpty = behaviorConfig.skipEmptyConversations;
 
     let conversations: ConversationSummary[] = [];
     let totalSeen = 0;
