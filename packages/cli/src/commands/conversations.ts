@@ -46,6 +46,27 @@ interface UnresolvedCandidate {
 }
 
 /**
+ * One conversation whose hydration (`getConversation`) failed before
+ * {@link planRename} ever ran on it -- distinct from {@link UnresolvedCandidate},
+ * which reached `planRename` and was told there was no usable title.
+ *
+ * @remarks
+ * Carries only identity and a coarse failure classifier, never the thrown
+ * error's message -- an error message from a failed fetch could echo request
+ * or response content, which the module's privacy rule forbids outside JSON
+ * output. Items of this shape never enter `candidates`, so they can never
+ * reach the apply phase.
+ */
+interface FetchFailedCandidate {
+  /** The conversation's stable identifier. */
+  uuid: string;
+  /** HTTP status code from the failed fetch, when the failure came from a definite non-2xx response. */
+  status?: number;
+  /** The failing error's constructor name (e.g. `"TypeError"`), used when no HTTP status is available -- never the error's message. */
+  errorClass?: string;
+}
+
+/**
  * Type predicate narrowing a {@link ResolveNameCandidate} to a
  * {@link ResolvableCandidate}-shaped value (`title` provably non-null).
  *
@@ -105,10 +126,40 @@ function formatUnresolvedReason(reason: NonNullable<ResolveNameCandidate["reason
  * progress output never reads `title` off this type.
  */
 type ApplyOutcome =
-  | { uuid: string; title: string; outcome: "renamed" }
-  | { uuid: string; title: string; outcome: "skipped-deleted" }
-  | { uuid: string; title: string; outcome: "concurrent-edit" }
-  | { uuid: string; title: string; outcome: "failed"; status?: number };
+  | {
+      /** The conversation's stable identifier. */
+      uuid: string;
+      /** The title that was written to claude.ai. */
+      title: string;
+      /** The write (or an ambiguous-retry re-read) confirmed the new title landed. */
+      outcome: "renamed";
+    }
+  | {
+      /** The conversation's stable identifier. */
+      uuid: string;
+      /** The title that was attempted; never written because the conversation was gone. */
+      title: string;
+      /** The write (or an ambiguous-retry re-read) 404'd -- the conversation was deleted out from under this batch. */
+      outcome: "skipped-deleted";
+    }
+  | {
+      /** The conversation's stable identifier. */
+      uuid: string;
+      /** The title that was attempted; not applied because someone/something else changed the name first. */
+      title: string;
+      /** An ambiguous-retry re-read found a name that landed on neither the old nor the attempted title -- left alone, reported. */
+      outcome: "concurrent-edit";
+    }
+  | {
+      /** The conversation's stable identifier. */
+      uuid: string;
+      /** The title that was attempted; its fate is unconfirmed. */
+      title: string;
+      /** The write (or an ambiguous-retry re-read) failed outright, with no further signal available to disambiguate. */
+      outcome: "failed";
+      /** HTTP status from the failed write, when the failure came from a definite non-2xx response. Omitted when no definite response was ever received, or when the failure came from the ambiguous-retry re-read path. */
+      status?: number;
+    };
 
 /**
  * Attempts one rename write and classifies the result.
@@ -274,8 +325,9 @@ async function applyRenames(opts: {
 /**
  * Prints the human-readable dry-run/plan report: the resolvable table
  * (`uuid -> proposed title`) and, if any exist, the unresolved section
- * (`uuid` + display reason only -- see {@link formatUnresolvedReason}),
- * followed by the resolvable/unresolved/total counts line.
+ * (`uuid` + display reason only -- see {@link formatUnresolvedReason} --
+ * with fetch-failed items appended under the fixed label `"fetch failed"`),
+ * followed by the resolvable/unresolved/fetch-failed/total counts line.
  *
  * @remarks
  * Titles appear here and nowhere else in the non-JSON output path -- no
@@ -284,26 +336,33 @@ async function applyRenames(opts: {
  *
  * @param resolvable - Candidates with a derived title.
  * @param unresolved - Candidates with no derivable title.
+ * @param fetchFailed - Conversations whose hydration failed before {@link planRename} ran.
  */
 function printPlanTable(
   resolvable: readonly ResolvableCandidate[],
   unresolved: readonly UnresolvedCandidate[],
+  fetchFailed: readonly FetchFailedCandidate[],
 ): void {
   console.log(`  ${"UUID".padEnd(UUID_COLUMN_WIDTH)}  ->  Proposed title`);
   for (const candidate of resolvable) {
     console.log(`  ${candidate.uuid.padEnd(UUID_COLUMN_WIDTH)}  ->  ${candidate.title}`);
   }
 
-  if (unresolved.length > 0) {
+  if (unresolved.length > 0 || fetchFailed.length > 0) {
     console.log(`\n  Unresolved:`);
     console.log(`  ${"UUID".padEnd(UUID_COLUMN_WIDTH)}  Reason`);
     for (const candidate of unresolved) {
       console.log(`  ${candidate.uuid.padEnd(UUID_COLUMN_WIDTH)}  ${formatUnresolvedReason(candidate.reason)}`);
     }
+    for (const candidate of fetchFailed) {
+      console.log(`  ${candidate.uuid.padEnd(UUID_COLUMN_WIDTH)}  fetch failed`);
+    }
   }
 
+  const fetchFailedSuffix = fetchFailed.length > 0 ? `, ${fetchFailed.length} fetch failed` : "";
   console.log(
-    `\n  ${resolvable.length} resolvable, ${unresolved.length} unresolved (${resolvable.length + unresolved.length} total)`,
+    `\n  ${resolvable.length} resolvable, ${unresolved.length} unresolved${fetchFailedSuffix} ` +
+      `(${resolvable.length + unresolved.length + fetchFailed.length} total)`,
   );
 }
 
@@ -333,6 +392,10 @@ const RENAME_ORPHAN_WARNING =
  * `--apply` is given -- `--apply` only adds a write phase afterward, so the
  * plan a dry run shows is exactly what `--apply` would act on if re-run
  * immediately after (modulo concurrent changes on claude.ai in between).
+ * Hydration is per-item: one conversation's `getConversation` failing is
+ * recorded as a {@link FetchFailedCandidate} and does not abort the rest of
+ * the batch or the plan report, but it does keep that conversation out of
+ * `candidates` entirely, so it can never reach the apply phase.
  *
  * Advisory/progress lines (fetch-cost, content warning, per-item apply
  * progress, interruption notice, rename-orphan warning) always go to
@@ -357,7 +420,15 @@ export const resolveNamesCommand = new Command("resolve-names")
     "--json",
     "Output the plan (and, with --apply, per-item outcomes) as JSON -- includes proposed titles; this is content-bearing output",
   )
-  .action(async (options: { org?: string; id: string[]; limit?: string; apply?: boolean; json?: boolean }) => {
+  .option("--query <expression>", "JMESPath query to filter JSON output (implies --json)")
+  .action(async (options: {
+    org?: string;
+    id: string[];
+    limit?: string;
+    apply?: boolean;
+    json?: boolean;
+    query?: string;
+  }) => {
     let limit: number | undefined;
     if (options.limit !== undefined) {
       limit = parseInt(options.limit, 10);
@@ -379,10 +450,27 @@ export const resolveNamesCommand = new Command("resolve-names")
 
     console.error(FETCH_COST_LINE_TEMPLATE(selected.length));
 
+    // Hydrate each candidate individually: a single failed getConversation
+    // must not abort the whole command before any plan prints. Failures are
+    // recorded as fetch-failed rows (uuid + status/error class only -- never
+    // content) and excluded from `candidates`, so they can never reach the
+    // apply phase below.
     const candidates: ResolveNameCandidate[] = [];
+    const fetchFailed: FetchFailedCandidate[] = [];
     for (const summary of selected) {
-      const conversation = await client.getConversation(orgId, summary.uuid);
-      candidates.push(planRename(conversation));
+      try {
+        const conversation = await client.getConversation(orgId, summary.uuid);
+        candidates.push(planRename(conversation));
+      } catch (err) {
+        if (err instanceof ClaudeSyncError) {
+          fetchFailed.push({ uuid: summary.uuid, status: err.statusCode });
+        } else {
+          fetchFailed.push({
+            uuid: summary.uuid,
+            errorClass: err instanceof Error ? err.constructor.name : typeof err,
+          });
+        }
+      }
     }
 
     const resolvable: ResolvableCandidate[] = candidates.filter(isResolvable).map((c) => ({
@@ -396,21 +484,25 @@ export const resolveNamesCommand = new Command("resolve-names")
 
     console.error(CONTENT_WARNING_LINE);
 
-    if (!options.json) {
-      printPlanTable(resolvable, unresolved);
+    if (!options.json && !options.query) {
+      printPlanTable(resolvable, unresolved, fetchFailed);
     }
 
+    const planJson = {
+      resolvable,
+      unresolved,
+      fetchFailed,
+      counts: {
+        resolvable: resolvable.length,
+        unresolved: unresolved.length,
+        fetchFailed: fetchFailed.length,
+        total: resolvable.length + unresolved.length + fetchFailed.length,
+      },
+    };
+
     if (!options.apply) {
-      if (options.json) {
-        outputJson({
-          resolvable,
-          unresolved,
-          counts: {
-            resolvable: resolvable.length,
-            unresolved: unresolved.length,
-            total: candidates.length,
-          },
-        });
+      if (options.json || options.query) {
+        outputJson(planJson, options.query);
       } else {
         console.log(`\n${DRY_RUN_TRAILER}`);
       }
@@ -421,7 +513,7 @@ export const resolveNamesCommand = new Command("resolve-names")
       client,
       orgId,
       resolvable,
-      json: options.json,
+      json: options.json || Boolean(options.query),
     });
 
     if (interrupted) {
@@ -436,19 +528,16 @@ export const resolveNamesCommand = new Command("resolve-names")
       concurrentEdit: outcomes.filter((o) => o.outcome === "concurrent-edit").length,
     };
 
-    if (options.json) {
-      outputJson({
-        resolvable,
-        unresolved,
-        counts: {
-          resolvable: resolvable.length,
-          unresolved: unresolved.length,
-          total: candidates.length,
+    if (options.json || options.query) {
+      outputJson(
+        {
+          ...planJson,
+          outcomes,
+          applyCounts,
+          interrupted,
         },
-        outcomes,
-        applyCounts,
-        interrupted,
-      });
+        options.query,
+      );
     } else {
       console.log(
         `\n  Renamed: ${applyCounts.renamed}, Unresolved: ${applyCounts.unresolved}, ` +
