@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Skip empty conversations.** Conversations with zero human messages (abandoned drafts, accidental opens) are now skipped by `export`, `export-all`, and the surface sync path, and hidden from `ls`, all by default. Emptiness is decided on the fully hydrated message tree (all branches) after fetch and before any artifact download; `ls` uses a cheap, spike-verified list-level signal (a null active-leaf pointer) that never costs extra requests. New typed outcomes (`skipped-empty`, `retained-stale`, `cleaned-empty`) with per-run counters, a `--include-empty` escape hatch on all three commands, and a configurable became-empty policy (`--on-became-empty sync|retain|clean`, default `sync`) governing previously-exported conversations that later lose their messages -- `retain` preserves prior output byte-for-byte (including project-bundle subtrees via preserve-glob injection), `clean` removes generated files while keeping the state sidecar for cheap future skips. Settings flow through `.claudesyncrc.json` (`skipEmptyConversations`, `onBecameEmpty`), env vars (`CLAUDESYNC_SKIP_EMPTY_CONVERSATIONS`, `CLAUDESYNC_ON_BECAME_EMPTY`), and per-command flags (flag > env > file). Slug allocation always runs before filtering, so an empty conversation appearing or disappearing can never rename a neighbor's export directory. See `docs/superpowers/specs/2026-07-17-skip-empty-conversations-design.md`.
+
 ### Fixed
 - **Installer could silently write a broken shell wrapper with an empty image ref.** `resolve_ref` failures inside command substitution could not abort the installer (`die` in `$()` only exits the subshell), so a transient registry error produced a wrapper whose `docker run` had no image. Both install paths now hard-fail with a clear re-run message instead. Caught by dogfooding the 0.10.1 wrapper upgrade.
 

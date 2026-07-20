@@ -63,8 +63,14 @@ export const SyncStateSchema = z.object({
   artifacts: z.array(SyncStateArtifactSchema),
   /** Wall-clock time this sync ran (ISO 8601). */
   last_sync_at: z.string(),
-  /** What the last sync did: a full export, an incremental update, or a no-op. */
-  last_sync_action: z.enum(["full", "incremental", "skipped"]),
+  /**
+   * What the last sync did: a full export, an incremental update, a no-op, or
+   * (additive) a became-empty "clean" that removed generated content while
+   * keeping this state file. `"cleaned-empty"` is additive-only -- state files
+   * written before it existed never contain it, and it never appears for any
+   * sync that did not go through the became-empty "clean" policy.
+   */
+  last_sync_action: z.enum(["full", "incremental", "skipped", "cleaned-empty"]),
 });
 
 /** Parsed, validated sync state. Inferred from {@link SyncStateSchema}. */

@@ -121,10 +121,13 @@ export {
 export type {
   FetchAndBuildOptions,
   FetchAndBuildResult,
+  FetchAndBuildEmpty,
 } from "./sync/fetch.js";
 export { fetchAndBuild } from "./sync/fetch.js";
 export type { ReplaceWithPreserveOptions } from "./sync/files-mode.js";
 export { replaceWithPreserve, walkRelative, expandPreserveForProject } from "./sync/files-mode.js";
+export type { OnBecameEmpty, EmptyAction } from "./sync/empty.js";
+export { isEmptyConversation, summaryLooksEmpty, decideEmptyAction } from "./sync/empty.js";
 
 // Concurrency / backpressure -- rate limiter, adaptive controller, worker pool
 export type {
@@ -154,6 +157,10 @@ export {
   loadConfigFile,
   resolveConcurrencyConfig,
 } from "./config/index.js";
+
+// Behavior config -- skip-empty-conversations and became-empty policy settings
+export type { BehaviorConfig } from "./config/index.js";
+export { BehaviorConfigSchema, resolveBehaviorConfig } from "./config/index.js";
 
 // Parallel org sync -- whole-org scheduler and per-project bundle assembly
 export type {

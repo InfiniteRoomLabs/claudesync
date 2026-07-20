@@ -5,7 +5,7 @@
  */
 
 import type { ClaudeSyncClient } from "../client/client.js";
-import { fetchAndBuild } from "../sync/fetch.js";
+import { fetchAndBuild, type FetchAndBuildResult } from "../sync/fetch.js";
 import type { ConversationSummary } from "../models/types.js";
 import type {
   CanonicalItem,
@@ -26,6 +26,16 @@ export interface ClaudeSourceOptions {
   authorEmail: string;
   /** Skip the per-conversation artifact list/download pass when set. */
   skipArtifacts?: boolean;
+  /**
+   * When true (the default), {@link ClaudeSource.read} runs `fetchAndBuild`'s
+   * `detectEmpty` check immediately after hydration and before any artifact
+   * I/O: a conversation with zero human messages across its full branched
+   * tree short-circuits into the {@link CanonicalItem.isEmpty} shape (see
+   * {@link ClaudeSource.read}) instead of a normal bundle. Set `false` to
+   * bypass this entirely -- `read` then behaves exactly as it did before this
+   * option existed, always resolving to a full bundle.
+   */
+  skipEmpty?: boolean;
 }
 
 /**
@@ -34,7 +44,10 @@ export interface ClaudeSourceOptions {
  * {@link ClaudeSource.list} wraps the conversation listing; {@link ClaudeSource.read}
  * wraps `fetchAndBuild` (fetch the message tree + artifacts, assemble a `GitBundle`),
  * so every emitted {@link CanonicalItem} carries a `bundle` (plus the raw conversation,
- * artifacts, and list summary an incremental sink needs), never a pre-rendered `tree`.
+ * artifacts, and list summary an incremental sink needs) -- unless the conversation is
+ * empty and {@link ClaudeSourceOptions.skipEmpty} is in effect, in which case the item
+ * carries {@link CanonicalItem.isEmpty} plus `conversation`/`summary` only. Never a
+ * pre-rendered `tree` (that shape is for `cc://` and other Class D local sources).
  */
 export class ClaudeSource implements SourceSurface {
   /** This source's address; defaults to `claude://me/org/<orgId>` when none is supplied. */
@@ -89,8 +102,15 @@ export class ClaudeSource implements SourceSurface {
   /**
    * Fetch the conversation tree + artifacts for `ref` and assemble its bundle.
    *
+   * Unless {@link ClaudeSourceOptions.skipEmpty} is `false`, this runs
+   * `fetchAndBuild`'s `detectEmpty` check right after hydration. A
+   * zero-human-message conversation short-circuits into the
+   * {@link CanonicalItem.isEmpty} shape -- `conversation` and `summary` set,
+   * `bundle`/`artifacts` absent -- before any artifact listing or download.
+   *
    * @param ref - A reference (typically from {@link ClaudeSource.list}) identifying the conversation.
-   * @returns A {@link CanonicalItem} with `bundle`, `conversation`, `artifacts`, and `summary` populated.
+   * @returns A {@link CanonicalItem} with either `bundle`/`conversation`/`artifacts`/`summary`
+   * populated (the normal case), or `isEmpty: true` plus `conversation`/`summary` only.
    * @throws Error if no list summary matches `ref.id`.
    */
   async read(ref: ItemRef): Promise<CanonicalItem> {
@@ -100,12 +120,37 @@ export class ClaudeSource implements SourceSurface {
       summary = this.summaries.get(ref.id);
     }
     if (!summary) throw new Error(`Conversation not found: ${ref.id}`);
-    const built = await fetchAndBuild(this.client, this.orgId, summary, {
+
+    const baseOptions = {
       authorName: this.options.authorName,
       authorEmail: this.options.authorEmail,
       skipArtifacts: this.options.skipArtifacts,
       multiBranch: true,
-    });
+    };
+
+    if (this.options.skipEmpty ?? true) {
+      const built = await fetchAndBuild(this.client, this.orgId, summary, {
+        ...baseOptions,
+        detectEmpty: true,
+      });
+      if ("empty" in built) {
+        return { ref, isEmpty: true, conversation: built.conversation, summary };
+      }
+      return this.toCanonicalItem(ref, summary, built);
+    }
+
+    // skipEmpty: false bypasses empty detection entirely -- byte-identical to
+    // the pre-existing fetch call (no detectEmpty key at all).
+    const built = await fetchAndBuild(this.client, this.orgId, summary, baseOptions);
+    return this.toCanonicalItem(ref, summary, built);
+  }
+
+  /** Project a full `fetchAndBuild` result into the {@link CanonicalItem} bundle shape. */
+  private toCanonicalItem(
+    ref: ItemRef,
+    summary: ConversationSummary,
+    built: FetchAndBuildResult
+  ): CanonicalItem {
     return {
       ref,
       bundle: built.bundle,

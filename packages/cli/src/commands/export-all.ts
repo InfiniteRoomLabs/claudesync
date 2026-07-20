@@ -3,7 +3,10 @@ import { resolve } from "node:path";
 import {
   AdaptiveController,
   resolveConcurrencyConfig,
+  resolveBehaviorConfig,
   runOrgSync,
+  type BehaviorConfig,
+  type OnBecameEmpty,
   type ExportFormat,
   type ProgressEvent,
 } from "@infinite-room-labs/claudesync-core";
@@ -23,6 +26,12 @@ function actionTag(action: string): string {
       return "Skipping (same)";
     case "skipped-existing":
       return "Skipping (exists)";
+    case "skipped-empty":
+      return "Skipping (empty)";
+    case "retained-stale":
+      return "Retaining (stale)";
+    case "cleaned-empty":
+      return "Cleaning (empty)";
     case "incremental":
       return "Updated";
     case "full":
@@ -111,6 +120,14 @@ export const exportAllCommand = new Command("export-all")
     parseIntArg
   )
   .option("--no-parallel", "Disable parallelism (sequential, 1 worker)")
+  .option(
+    "--include-empty",
+    "Export conversations with no human messages instead of skipping them. Env: CLAUDESYNC_SKIP_EMPTY_CONVERSATIONS"
+  )
+  .option(
+    "--on-became-empty <policy>",
+    "Policy for a previously-exported conversation that has since become empty: sync (default, re-materializes and records the deletion), retain (keeps the existing output untouched), or clean (removes the generated output). Env: CLAUDESYNC_ON_BECAME_EMPTY"
+  )
   .action(
     async (options: {
       org?: string;
@@ -127,12 +144,26 @@ export const exportAllCommand = new Command("export-all")
       startWorkers?: number;
       projectWorkers?: number;
       parallel: boolean;
+      includeEmpty?: boolean;
+      onBecameEmpty?: string;
     }) => {
       if (options.skipSame && options.skipExisting) {
         console.error(
           "error: --skip-same and --skip-existing are mutually exclusive"
         );
         process.exit(1);
+      }
+
+      let behaviorConfig: BehaviorConfig;
+      try {
+        behaviorConfig = resolveBehaviorConfig({
+          skipEmptyConversations: options.includeEmpty ? false : undefined,
+          onBecameEmpty: options.onBecameEmpty as OnBecameEmpty | undefined,
+        });
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+        return; // unreachable after process.exit, helps the type narrower
       }
 
       const config = resolveConcurrencyConfig({
@@ -188,6 +219,8 @@ export const exportAllCommand = new Command("export-all")
           maxRetries: config.request.maxRetries,
           signal: abortController.signal,
           onProgress: renderProgress,
+          skipEmpty: behaviorConfig.skipEmptyConversations,
+          onBecameEmpty: behaviorConfig.onBecameEmpty,
         });
 
         const aborted = abortController.signal.aborted;
@@ -199,6 +232,20 @@ export const exportAllCommand = new Command("export-all")
         console.log(`  Standalone conversations: ${result.standalone}`);
         if (result.errors > 0) {
           console.log(`  Errors: ${result.errors}`);
+        }
+        if (
+          result.skippedEmpty > 0 ||
+          result.retainedStale > 0 ||
+          result.cleanedEmpty > 0
+        ) {
+          let emptyLine = `  ${result.skippedEmpty} empty skipped`;
+          if (result.retainedStale > 0) {
+            emptyLine += `, ${result.retainedStale} retained`;
+          }
+          if (result.cleanedEmpty > 0) {
+            emptyLine += `, ${result.cleanedEmpty} cleaned`;
+          }
+          console.log(emptyLine);
         }
         if (aborted) {
           process.exitCode = 130; // 128 + SIGINT
