@@ -14,6 +14,8 @@ Unnamed conversations (empty `name` on the API) export as `unnamed-<uuid>/` and 
 
 ## Phase 0 spike (required; runs only with explicit user go-ahead -- it mutates real data)
 
+**COMPLETE 2026-07-20 -- findings in `docs/spike-results/rename-findings.md`.** Summary: `PUT /api/organizations/<org>/chat_conversations/<uuid>` body `{"name": string}` returns 202 with the updated summary; rollback via `name: ""` proven; same-value idempotent; no server truncation at 150 chars; Unicode fine; project conversations eligible; `updated_at` bumps on every rename (one refetch per renamed conversation on next sync); unnamed means `name === ""`. Bonus: the UI sometimes triggers server-side auto-titling on open (unreliable -- not built upon).
+
 Observe, then reproduce -- do not guess the endpoint:
 
 1. Capture the browser's actual rename request from claude.ai (devtools/claude-in-chrome network capture while renaming a conversation in the UI). Record method, path, headers, body, response shape.
