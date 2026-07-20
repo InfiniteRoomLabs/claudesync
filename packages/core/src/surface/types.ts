@@ -105,7 +105,7 @@ export interface ItemRef {
 /**
  * Neutral interchange produced by a source and consumed by a sink.
  *
- * Carries exactly one of two payload shapes, distinguished by which field is set:
+ * Carries one of three payload shapes:
  *
  *  - **bundle** (claude.ai): the real wire format is the `GitBundle` (it preserves
  *    the commit/branch structure a flat map would lose for `format=git`).
@@ -116,8 +116,15 @@ export interface ItemRef {
  *    already rendered a flat `relPath -> content` tree (the PRD's `CanonicalTree`);
  *    the sink writes it verbatim via `writeTreeWithPreserve`. Bundle-only formats
  *    (`git` / `json`) do not apply to pre-rendered trees.
+ *  - **empty** ({@link CanonicalItem.isEmpty} set): the source short-circuited
+ *    before building either of the above. `conversation` (and `summary`, where
+ *    the source has one) are still populated so a sink can identify/label the
+ *    item and, per its became-empty policy, materialize an empty snapshot; but
+ *    neither {@link CanonicalItem.bundle} nor {@link CanonicalItem.tree} is set,
+ *    because no artifact/tree work ran before the source detected emptiness.
  *
- * Exactly one of {@link CanonicalItem.bundle} / {@link CanonicalItem.tree} is present.
+ * At most one of {@link CanonicalItem.bundle} / {@link CanonicalItem.tree} is
+ * present, and never either when {@link CanonicalItem.isEmpty} is `true`.
  */
 export interface CanonicalItem {
   /** Reference identifying this item. */
@@ -132,6 +139,17 @@ export interface CanonicalItem {
   summary?: ConversationSummary;
   /** Pre-rendered `relPath -> content` tree; mutually exclusive with {@link CanonicalItem.bundle}. */
   tree?: TreePayload;
+  /**
+   * Neutral "the source considers this item content-empty" marker. Any source
+   * may set this using its own domain-specific definition of empty (e.g.
+   * `ClaudeSource` sets it via `isEmptyConversation`, a zero-human-message
+   * check); the orchestrator reacts to it purely as an opaque boolean and
+   * never inspects why it is set. Unset (or `false`) on every item from a
+   * source with no concept of emptiness, which is what keeps such sources
+   * byte-identical whether or not the orchestrator's empty handling is enabled.
+   * See the class doc for the third payload shape this implies.
+   */
+  isEmpty?: boolean;
 }
 
 /**
@@ -158,6 +176,14 @@ export interface ApplyOpts {
   delete?: boolean;
   /** Plan only, no writes. Phase 2 -- not yet honored. */
   dryRun?: boolean;
+  /**
+   * The became-empty `"clean"` directive: when `true` and `item.isEmpty` is
+   * set, the sink deletes the item's generated on-disk content (preserving
+   * `CHANGELOG.md`/`preserve` globs, mirroring the legacy
+   * `syncConversation`/`cleanEmptyConversation` behavior) instead of writing a
+   * normal snapshot. Ignored by sinks/items outside the empty-item path.
+   */
+  cleanEmpty?: boolean;
 }
 
 /**
@@ -174,10 +200,24 @@ export interface ApplyResult {
   /** The item that was written. */
   ref: ItemRef;
   /**
-   * What the sink did: a full write, an incremental update, a skip (unchanged),
-   * or a skip because the target already existed.
+   * What the sink did:
+   *
+   * - `"full"` / `"incremental"` / `"skipped"` / `"skipped-existing"`: as before.
+   * - `"skipped-empty"`: the item is empty ({@link CanonicalItem.isEmpty}) and
+   *   the sink has no prior output for it, so there is nothing to reconcile.
+   * - `"retained-stale"`: the item became empty and the became-empty policy is
+   *   `"retain"`; the sink's existing output is left untouched.
+   * - `"cleaned-empty"`: the item became empty and the became-empty policy is
+   *   `"clean"`; the sink removed its generated output for this item.
    */
-  action: "full" | "incremental" | "skipped" | "skipped-existing";
+  action:
+    | "full"
+    | "incremental"
+    | "skipped"
+    | "skipped-existing"
+    | "skipped-empty"
+    | "retained-stale"
+    | "cleaned-empty";
   /** Human-readable explanation, primarily for skips. */
   reason?: string;
   /** Whether a changelog entry was emitted. */

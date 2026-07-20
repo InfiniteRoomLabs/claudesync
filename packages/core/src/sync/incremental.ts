@@ -124,9 +124,11 @@ export function isSameByListMetadata(
  * clean, and the forced-full "sync" rebuild all reason from a hydrated
  * conversation already known to have zero human messages, so none of them
  * ever list or download artifacts (see the module-level self-review note on
- * `syncConversation`).
+ * `syncConversation`). Exported so the surface seam's `FileSink` can build the
+ * same empty-snapshot bundle for an `isEmpty` canonical item without
+ * duplicating this literal.
  */
-const NO_ARTIFACTS: ArtifactListResponse = {
+export const NO_ARTIFACTS: ArtifactListResponse = {
   success: true,
   files: [],
   files_metadata: [],
@@ -247,12 +249,16 @@ async function handleBecameEmpty(
  * returns. `json` format has no directory to reconcile -- it is a single
  * `<outputPath>.json` file -- so that case just removes the file directly.
  *
+ * Exported (in addition to being used by `handleBecameEmpty` above) so the
+ * surface seam's `FileSink` can perform the identical clean for its
+ * `ApplyOpts.cleanEmpty` directive without duplicating the preserve/drop logic.
+ *
  * @param outputPath - Conversation directory (files/git) or json sidecar path
  *   stem (the actual file is `outputPath + ".json"`).
  * @param format - On-disk layout in effect for this conversation.
  * @param preserve - Files-mode preserve globs, relative to `outputPath`.
  */
-async function cleanEmptyConversation(
+export async function cleanEmptyConversation(
   outputPath: string,
   format: ExportFormat,
   preserve: readonly string[]

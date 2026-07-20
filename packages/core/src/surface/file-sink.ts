@@ -10,9 +10,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { readSyncState } from "../sync/state.js";
+import { readSyncState, writeSyncState } from "../sync/state.js";
 import { writeTreeWithPreserve } from "../sync/tree.js";
 import { materializeConversation, type ExportFormat } from "../sync/materialize.js";
+import { cleanEmptyConversation, NO_ARTIFACTS } from "../sync/incremental.js";
+import { buildGitBundle } from "../export/bundle-builder.js";
 import { safeSlug, displayName as toDisplayName } from "../util/naming.js";
 import type {
   ApplyOpts,
@@ -146,14 +148,17 @@ export class FileSink implements SinkSurface {
   /**
    * Materialize `item` under {@link pathFor}. A pre-rendered `item.tree`
    * (`cc://` and other Class-D sources) is written verbatim via
-   * `writeTreeWithPreserve`; otherwise the claude.ai bundle path runs through
+   * `writeTreeWithPreserve`; an `item.isEmpty` item is handled by
+   * {@link writeEmpty}; otherwise the claude.ai bundle path runs through
    * `materializeConversation`, honoring `prevState` for incremental diffing.
    *
-   * @param item - The canonical payload to write; must carry either a `tree` or a full bundle.
+   * @param item - The canonical payload to write; must carry a `tree`, a full
+   * bundle, or (`isEmpty: true`) a `conversation` + `summary`.
    * @param opts - Write options; `preserve` patterns are passed through to the writer.
    * @param prevState - Prior state from {@link stat}, or `null` for a fresh sync.
    * @returns The outcome of the write.
-   * @throws If `item` carries neither a pre-rendered tree nor a complete bundle.
+   * @throws If `item` carries none of a pre-rendered tree, a complete bundle,
+   * or the `isEmpty` conversation/summary pair.
    */
   async write(
     item: CanonicalItem,
@@ -169,6 +174,10 @@ export class FileSink implements SinkSurface {
         changelogWritten: false,
         displayName: toDisplayName(item.ref.name, item.ref.id),
       };
+    }
+
+    if (item.isEmpty) {
+      return this.writeEmpty(item, opts, prevState);
     }
 
     if (!item.bundle || !item.conversation || !item.artifacts || !item.summary) {
@@ -190,6 +199,88 @@ export class FileSink implements SinkSurface {
       action: res.action,
       changelogWritten: res.changelogWritten,
       displayName: toDisplayName(item.summary.name, item.summary.uuid),
+    };
+  }
+
+  /**
+   * Handles an `item.isEmpty` canonical item: either the became-empty
+   * `"clean"` directive ({@link ApplyOpts.cleanEmpty}) or a forced full
+   * materialization of an empty snapshot (the orchestrator's
+   * `"materialize-full"` outcome, signaled by `prevState: null`). Mirrors
+   * `syncConversation`'s `handleBecameEmpty` (`packages/core/src/sync/incremental.ts`)
+   * -- reusing its `cleanEmptyConversation`/`NO_ARTIFACTS` helpers -- so a
+   * became-empty item lands on disk identically whether it flows through the
+   * legacy path or the surface seam.
+   *
+   * @param item - Canonical item with `isEmpty: true`; must carry `conversation`
+   * and `summary` (no `bundle`/`artifacts` -- the source short-circuited before
+   * building them).
+   * @param opts - Write options; `cleanEmpty` selects the clean directive.
+   * @param prevState - Prior state; ignored (treated as absent) for the clean
+   * directive, and expected to be `null` from the orchestrator for the
+   * forced-full path so `materializeConversation` treats this as an initial
+   * diff (mirrors Task 3's `prevState: undefined`).
+   * @returns `"cleaned-empty"` for the clean directive, otherwise the normal
+   * `materializeConversation` action (`"full"` when `prevState` is `null`).
+   * @throws If `item` lacks the `conversation`/`summary` an empty item must carry.
+   */
+  private async writeEmpty(
+    item: CanonicalItem,
+    opts: ApplyOpts,
+    prevState: SinkState | null
+  ): Promise<ApplyResult> {
+    if (!item.conversation || !item.summary) {
+      throw new Error(
+        "FileSink.write: an isEmpty CanonicalItem must carry conversation and summary"
+      );
+    }
+    const { conversation, summary } = item;
+    const outputPath = this.pathFor(item.ref);
+    const displayLabel = toDisplayName(summary.name, summary.uuid);
+
+    if (opts.cleanEmpty) {
+      await cleanEmptyConversation(outputPath, this.format, opts.preserve ?? []);
+      const state: SinkState = {
+        schema_version: 1,
+        conversation_uuid: conversation.uuid,
+        conversation_name: conversation.name,
+        model: conversation.model ?? null,
+        updated_at: summary.updated_at,
+        current_leaf_message_uuid: conversation.current_leaf_message_uuid ?? null,
+        leaves: [],
+        artifacts: [],
+        last_sync_at: new Date().toISOString(),
+        last_sync_action: "cleaned-empty",
+      };
+      writeSyncState(this.stateDir(item.ref), state);
+      return {
+        ref: item.ref,
+        action: "cleaned-empty",
+        changelogWritten: false,
+        displayName: displayLabel,
+      };
+    }
+
+    const bundle = buildGitBundle(conversation, NO_ARTIFACTS, new Map(), {
+      authorName: opts.authorName,
+      authorEmail: opts.authorEmail,
+      multiBranch: true,
+    });
+    const res = await materializeConversation({
+      bundle,
+      conversation,
+      artifacts: NO_ARTIFACTS,
+      summary,
+      prevState: prevState ?? undefined,
+      outputPath,
+      format: this.format,
+      preserve: opts.preserve ?? [],
+    });
+    return {
+      ref: item.ref,
+      action: res.action,
+      changelogWritten: res.changelogWritten,
+      displayName: displayLabel,
     };
   }
 }
