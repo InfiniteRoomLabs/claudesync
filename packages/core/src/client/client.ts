@@ -300,6 +300,58 @@ export class ClaudeSyncClient {
   }
 
   /**
+   * Rename a conversation via `PUT chat_conversations/<id>` with a partial-update
+   * body of `{ name }`. The endpoint answers 202 with the updated conversation
+   * summary; the body is intentionally not parsed or validated -- callers who
+   * need the fresh summary should re-fetch via {@link ClaudeSyncClient.getConversation}.
+   *
+   * Un-naming (setting `name` back to `""`) is deliberately not exposed here in
+   * v1, even though the endpoint accepts it (spike-confirmed reversible) --
+   * rejecting empty/whitespace-only `name` client-side keeps the write's
+   * surface area to "give this conversation a title."
+   *
+   * Like {@link ClaudeSyncClient.putProjectMemoryControls}, this call is
+   * **never retried** automatically: a 429 or 5xx surfaces directly to the
+   * caller. Unlike that call, there is no ambiguous "did it apply" timeout
+   * window to reason about -- this is an undocumented, fast, single-field
+   * write with no documented idempotency contract beyond the spike's manual
+   * probing, so retrying blind on this client's own initiative is not
+   * something to build in speculatively. If a caller's rename command fails
+   * partway through a batch, re-running that command is the resume path: the
+   * spike found same-value re-assignment idempotent (202, no error), so a
+   * retried rename of an already-renamed conversation is harmless.
+   *
+   * @param orgId - Organization UUID.
+   * @param conversationId - Conversation UUID.
+   * @param name - The new title. Must contain at least one non-whitespace
+   * character; un-naming is not supported by this method.
+   * @throws {@link Error} if `name` is empty or whitespace-only. Thrown before
+   * any network call is made, and the message never echoes the rejected value.
+   * @throws {@link RateLimitError} on HTTP 429.
+   * @throws {@link ClaudeSyncError} on any other non-2xx response.
+   */
+  async renameConversation(
+    orgId: string,
+    conversationId: string,
+    name: string
+  ): Promise<void> {
+    if (name.trim() === "") {
+      throw new Error(
+        `renameConversation: name must be non-empty after trimming whitespace (conversationId: ${conversationId})`
+      );
+    }
+
+    await this.requestResponse(
+      buildUrl(ENDPOINTS.conversation(orgId, conversationId)),
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      }
+    );
+  }
+
+  /**
    * Full-text search across an org's conversations.
    *
    * Handles double-JSON-encoded responses defensively: the API sometimes returns
