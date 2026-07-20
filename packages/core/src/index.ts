@@ -205,6 +205,9 @@ export type {
 // Naming helpers -- slugify titles into filesystem-safe names
 export { slugify, safeSlug, displayName } from "./util/naming.js";
 
+// Conversation title derivation -- pure, grapheme-safe title from the opening human message
+export { deriveConversationTitle, MAX_TITLE_GRAPHEMES } from "./conversations/title.js";
+
 // Glob helpers -- compile and match glob patterns for path filtering
 export { matchGlob, matchAnyGlob, compileGlob } from "./util/glob.js";
 
