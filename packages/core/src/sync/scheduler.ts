@@ -7,8 +7,9 @@ import type {
   Project,
   ProjectDoc,
 } from "../models/types.js";
-import { fetchAndBuild } from "./fetch.js";
+import { fetchAndBuild, type FetchAndBuildResult } from "./fetch.js";
 import { syncConversation, type ExportFormat } from "./incremental.js";
+import type { OnBecameEmpty } from "./empty.js";
 import {
   assembleProjectBundle,
   writeProjectBundle,
@@ -116,6 +117,33 @@ export interface RunOrgSyncOptions {
   signal?: AbortSignal;
   /** Callback invoked for each {@link ProgressEvent}. */
   onProgress?: (e: ProgressEvent) => void;
+  /**
+   * Skip conversations with zero human messages instead of exporting an
+   * empty bundle for them. Defaults to `true` (same default as
+   * {@link SyncConversationOptions.skipEmpty}). Threaded into every
+   * standalone {@link syncConversation} call; project conversations are
+   * detected the same way (via {@link fetchAndBuild}'s `detectEmpty`) but
+   * have no per-conversation persisted state to consult, so an empty
+   * project conversation is always excluded from its project's bundle when
+   * this is `true` -- see {@link onBecameEmpty}'s doc for why the other
+   * policies are unreachable there.
+   */
+  skipEmpty?: boolean;
+  /**
+   * Policy applied to a conversation found empty when prior sync state
+   * exists; see {@link OnBecameEmpty} for what each value does. Defaults to
+   * `"sync"`. Fully honored for standalone conversations, which persist
+   * per-conversation sync state and pass this straight through to
+   * {@link syncConversation}. Project conversations have no equivalent
+   * persisted state -- a project's bundle is always fully rebuilt from the
+   * conversations fetched in the current run (see `exportToGit`, which
+   * never appends) -- so `decideEmptyAction` is always called with
+   * `hasPriorState: false` for them, which only ever resolves to `"skip"`.
+   * This option is still accepted for project conversations for API
+   * symmetry with the standalone path and to leave room for a future task
+   * that adds per-project-conversation state.
+   */
+  onBecameEmpty?: OnBecameEmpty;
 }
 
 /** Summary counts returned by {@link runOrgSync} after the pool drains. */
@@ -126,6 +154,29 @@ export interface RunOrgSyncResult {
   standalone: number;
   /** Number of tasks that failed terminally. */
   errors: number;
+  /**
+   * Number of conversations (standalone plus project-attached) skipped as
+   * `"skipped-empty"`: zero human messages and no prior sync state to
+   * reconcile. Excluded from any project bundle; no directory or state
+   * written for standalone ones.
+   */
+  skippedEmpty: number;
+  /**
+   * Number of standalone conversations resolved as `"retained-stale"`:
+   * became empty, prior state existed, and {@link RunOrgSyncOptions.onBecameEmpty}
+   * is `"retain"`. Always `0` for project conversations -- see
+   * {@link RunOrgSyncOptions.onBecameEmpty}'s doc for why that policy is
+   * unreachable there.
+   */
+  retainedStale: number;
+  /**
+   * Number of standalone conversations resolved as `"cleaned-empty"`:
+   * became empty, prior state existed, and {@link RunOrgSyncOptions.onBecameEmpty}
+   * is `"clean"`. Always `0` for project conversations -- see
+   * {@link RunOrgSyncOptions.onBecameEmpty}'s doc for why that policy is
+   * unreachable there.
+   */
+  cleanedEmpty: number;
 }
 
 /**
@@ -202,7 +253,9 @@ interface ProjectAccumulator {
  *   controller with {@link RunOrgSyncOptions.controller}.
  * @param orgId - Organization UUID to sync.
  * @param options - Run configuration; see {@link RunOrgSyncOptions}.
- * @returns Counts of projects, standalone conversations, and terminal errors.
+ * @returns Counts of projects, standalone conversations, terminal errors, and
+ *   the three empty-conversation outcomes (skipped/retained/cleaned); see
+ *   {@link RunOrgSyncResult}.
  */
 export async function runOrgSync(
   client: ClaudeSyncClient,
@@ -274,6 +327,12 @@ export async function runOrgSync(
   let standaloneCount = 0;
   /** Terminal failure count, returned in {@link RunOrgSyncResult}. */
   let errors = 0;
+  /** Running total for {@link RunOrgSyncResult.skippedEmpty}. */
+  let skippedEmpty = 0;
+  /** Running total for {@link RunOrgSyncResult.retainedStale}. */
+  let retainedStale = 0;
+  /** Running total for {@link RunOrgSyncResult.cleanedEmpty}. */
+  let cleanedEmpty = 0;
 
   /**
    * Map a task to its queue priority band.
@@ -458,15 +517,59 @@ export async function runOrgSync(
    * outstanding conversation. The slug is taken from the project's
    * disambiguated map, falling back to the bundle's own slug.
    *
+   * When {@link RunOrgSyncOptions.skipEmpty} is in effect (the default), the
+   * fetch runs with `detectEmpty: true`; a conversation found to have zero
+   * human messages is excluded from the project's bundle entirely (settled
+   * with no built entry, exactly like a terminally-failed conversation) and
+   * counted in `skippedEmpty` instead of being fetched further or committed.
+   * See {@link RunOrgSyncOptions.onBecameEmpty}'s doc for why only the "skip"
+   * outcome is reachable for project conversations.
+   *
    * @param task - The project-conv task identifying the conversation.
    */
   async function runProjectConv(task: ProjectConvTask): Promise<void> {
-    const built = await fetchAndBuild(client, orgId, task.conv, {
-      authorName,
-      authorEmail,
-      skipArtifacts: options.skipArtifacts,
-      multiBranch: true,
-    });
+    const skipEmpty = options.skipEmpty ?? true;
+
+    let built: FetchAndBuildResult;
+    if (skipEmpty) {
+      const fetched = await fetchAndBuild(client, orgId, task.conv, {
+        authorName,
+        authorEmail,
+        skipArtifacts: options.skipArtifacts,
+        multiBranch: true,
+        detectEmpty: true,
+      });
+      if ("empty" in fetched) {
+        // Project conversations have no per-conversation persisted sync
+        // state -- the project bundle is always rebuilt fully from the
+        // conversations fetched this run -- so decideEmptyAction would
+        // always resolve to "skip" here regardless of onBecameEmpty; see
+        // RunOrgSyncOptions.onBecameEmpty's doc.
+        skippedEmpty += 1;
+        convCompleted += 1;
+        emit({
+          type: "conv-done",
+          kind: "project",
+          action: "skipped-empty",
+          displayName: displayName(task.conv.name, task.conv.uuid),
+          completed: convCompleted,
+          total: convTotal,
+        });
+        await settleProjectConv(task.projectId);
+        return;
+      }
+      built = fetched;
+    } else {
+      // skipEmpty: false bypasses empty handling entirely -- byte-identical
+      // to the pre-existing fetch call (no detectEmpty key at all).
+      built = await fetchAndBuild(client, orgId, task.conv, {
+        authorName,
+        authorEmail,
+        skipArtifacts: options.skipArtifacts,
+        multiBranch: true,
+      });
+    }
+
     convCompleted += 1;
     emit({
       type: "conv-done",
@@ -486,8 +589,10 @@ export async function runOrgSync(
   /**
    * Sync one standalone conversation directly into its own
    * `conversations/<slug>` directory via {@link syncConversation}, which owns
-   * the full persistence cycle (state file, changelog, swap), then emit
-   * `conv-done` carrying the action it chose (full/incremental/skipped).
+   * the full persistence cycle (state file, changelog, swap, became-empty
+   * policy), then emit `conv-done` carrying the action it chose
+   * (full/incremental/skipped/skipped-empty/retained-stale/cleaned-empty) and
+   * tally the three empty-related outcomes into the running counters.
    * Unlike project convs, standalone convs have no shared barrier to settle.
    *
    * @param task - The standalone task identifying the conversation.
@@ -506,8 +611,13 @@ export async function runOrgSync(
       skipExisting: options.skipExisting,
       skipArtifacts: options.skipArtifacts,
       preserve,
+      skipEmpty: options.skipEmpty,
+      onBecameEmpty: options.onBecameEmpty,
     });
     convCompleted += 1;
+    if (result.action === "skipped-empty") skippedEmpty += 1;
+    else if (result.action === "retained-stale") retainedStale += 1;
+    else if (result.action === "cleaned-empty") cleanedEmpty += 1;
     emit({
       type: "conv-done",
       kind: "standalone",
@@ -639,5 +749,8 @@ export async function runOrgSync(
     projects: projects.length,
     standalone: standaloneCount,
     errors,
+    skippedEmpty,
+    retainedStale,
+    cleanedEmpty,
   };
 }
