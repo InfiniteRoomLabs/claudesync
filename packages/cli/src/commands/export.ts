@@ -82,11 +82,15 @@ export const exportCommand = new Command("export")
     const { auth, client } = createClient();
     const orgId = await resolveOrgId(auth, options.org);
 
-    // claude.ai expressed as a source surface.
+    // claude.ai expressed as a source surface. skipEmpty must mirror the
+    // resolved behavior config: with --include-empty the source must do a
+    // full artifact-bearing fetch (never the artifact-less isEmpty early
+    // exit), matching export-all's behavior for the same conversation.
     const source = new ClaudeSource(client, orgId, {
       authorName: options.authorName,
       authorEmail: options.authorEmail,
       skipArtifacts: options.skipArtifacts,
+      skipEmpty: behaviorConfig.skipEmptyConversations,
     });
 
     // Resolve the conversation (one cached list call inside the source) so we
