@@ -37,6 +37,14 @@ The list endpoint (`ConversationSummarySchema`) carries no message counts, so ex
 - Outcome B (no invariant): exports/sync accept bounded hydration (they fetch trees anyway -- see pipeline below); `ls` CANNOT afford N+1 hydration, so `ls` default degrades to annotate-only (a `possibly-empty` marker where cheap signals suggest it) and the hide-by-default behavior is limited to surfaces that already hydrate. This deviation from the locked scope, if triggered, is flagged to the user at plan time before implementation.
 - Unverified heuristics must not ship: whichever branch is taken is recorded here with the spike evidence.
 
+### Spike results (run 2026-07-20, live API, read-only; outcome: A, with a one-directional invariant)
+
+- Corpus: 1628 conversations in the account. Summary fields observed: `created_at, current_leaf_message_uuid, effective_thinking_mode, is_starred, is_temporary, is_wiggle_enabled, model, name, platform, project, project_uuid, session_id, settings, summary, updated_at, user_uuid, uuid`. No message-count field exists.
+- 15 conversations had `current_leaf_message_uuid == null`. ALL 10 hydrated null-leaf conversations had literally ZERO messages (`chat_messages: []`). Zero violations of `leaf == null -> no messages`.
+- All 12 hydrated non-null-leaf conversations had at least one human message. No assistant-greeting-only conversation was observed in the corpus.
+- **Decision (one-directional invariant):** `ls` hides on `current_leaf_message_uuid == null` ONLY -- list-level, zero extra requests. This direction is the safe one for a listing: a hypothetical assistant-only conversation (non-null leaf, zero human messages) would still be SHOWN by `ls` but is skipped exactly by export/sync's hydrated predicate. The asymmetry ("ls hides a subset of what exports skip") is documented in `--help` text.
+- Export/sync/export-all use the exact hydrated predicate (they fetch trees anyway); the summary-level signal is never used where the exact answer is already in hand.
+
 ## Pipeline placement (detection cost)
 
 Order of operations in the fetch path becomes: hydrate message tree -> classify emptiness -> ONLY for included conversations, list/download artifacts and build the bundle. Today `packages/core/src/sync/fetch.ts` downloads artifacts before bundle construction; classification must run before that work, otherwise skipping saves little.
