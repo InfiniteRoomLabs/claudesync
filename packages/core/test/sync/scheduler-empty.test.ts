@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  readFileSync,
+  mkdirSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runOrgSync, type ProgressEvent } from "@core/sync/scheduler.js";
@@ -124,6 +131,23 @@ function mockClient(opts: {
       conversation(uuid, uuid, { empty: emptyUuids.has(uuid) }),
   } as unknown as ClaudeSyncClient;
   return client;
+}
+
+/**
+ * Seeds a project conversation's subtree with stand-in materialized content,
+ * as if a prior `files`-format run had exported it. Used to construct the
+ * became-empty directory-existence proxy scenarios for project
+ * conversations (see {@link handleEmptyProjectConv} in scheduler.ts).
+ *
+ * @param projectPath - Project root directory (`<outputRoot>/projects/<slug>`).
+ * @param slug - The conversation's collision-safe slug.
+ * @param content - Stand-in file content, asserted byte-identical after a
+ *   `retain` run.
+ */
+function seedProjectConvSubtree(projectPath: string, slug: string, content: string): void {
+  const dir = join(projectPath, "conversations", slug);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "conversation.md"), content, "utf-8");
 }
 
 describe("runOrgSync -- skip-empty integration", () => {
@@ -285,6 +309,126 @@ describe("runOrgSync -- skip-empty integration", () => {
         action: "skipped-empty",
         displayName: "Empty One",
       });
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runOrgSync -- became-empty project conversation subtree handling", () => {
+  function baseFilesOpts(out: string, controller: ReturnType<typeof makeController>) {
+    return {
+      outputRoot: out,
+      format: "files" as const,
+      authorName: "Test",
+      authorEmail: "test@example.com",
+      skipArtifacts: true,
+      controller,
+      maxRetries: 5,
+    };
+  }
+
+  /** Shared two-conversation project fixture: c1 stays nonempty, e1 becomes empty. */
+  function pAClient() {
+    return mockClient({
+      projects: [project("pA", "Project A")],
+      projectConvs: {
+        pA: [summary("c1", "C One", "pA"), summary("e1", "Empty One", "pA")],
+      },
+      allConversations: [
+        summary("c1", "C One", "pA"),
+        summary("e1", "Empty One", "pA"),
+      ],
+      emptyUuids: new Set(["e1"]),
+    });
+  }
+
+  it("retains a became-empty project conversation's prior subtree byte-identical under onBecameEmpty: retain", async () => {
+    const out = mkdtempSync(join(tmpdir(), "cs-sched-empty-proj-"));
+    try {
+      const projectSlug = safeSlug("Project A", "pA");
+      const emptySlug = safeSlug("Empty One", "e1");
+      const nonemptySlug = safeSlug("C One", "c1");
+      const projectPath = join(out, "projects", projectSlug);
+      seedProjectConvSubtree(projectPath, emptySlug, "PRIOR CONTENT\n");
+
+      const result = await runOrgSync(pAClient(), "org", {
+        ...baseFilesOpts(out, makeController()),
+        onBecameEmpty: "retain",
+      });
+
+      expect(result.errors).toBe(0);
+      expect(result.retainedStale).toBe(1);
+      expect(result.skippedEmpty).toBe(0);
+      expect(result.cleanedEmpty).toBe(0);
+
+      // The prior subtree survives the rebuild byte-identical.
+      expect(
+        readFileSync(join(projectPath, "conversations", emptySlug, "conversation.md"), "utf-8")
+      ).toBe("PRIOR CONTENT\n");
+
+      // The other (nonempty) conversation is exported normally, unaffected.
+      expect(
+        existsSync(join(projectPath, "conversations", nonemptySlug, "conversation.md"))
+      ).toBe(true);
+
+      // README/bundle excludes the retained-but-empty conversation from the count.
+      const readme = readFileSync(join(projectPath, "README.md"), "utf-8");
+      expect(readme).toContain("**Conversations:** 1");
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes a became-empty project conversation's prior subtree under onBecameEmpty: clean", async () => {
+    const out = mkdtempSync(join(tmpdir(), "cs-sched-empty-proj-"));
+    try {
+      const projectSlug = safeSlug("Project A", "pA");
+      const emptySlug = safeSlug("Empty One", "e1");
+      const nonemptySlug = safeSlug("C One", "c1");
+      const projectPath = join(out, "projects", projectSlug);
+      seedProjectConvSubtree(projectPath, emptySlug, "PRIOR CONTENT\n");
+
+      const result = await runOrgSync(pAClient(), "org", {
+        ...baseFilesOpts(out, makeController()),
+        onBecameEmpty: "clean",
+      });
+
+      expect(result.errors).toBe(0);
+      expect(result.cleanedEmpty).toBe(1);
+      expect(result.skippedEmpty).toBe(0);
+      expect(result.retainedStale).toBe(0);
+
+      // The prior subtree is gone -- the rebuild dropped it, no preserve glob.
+      expect(existsSync(join(projectPath, "conversations", emptySlug))).toBe(false);
+      // The other (nonempty) conversation is unaffected.
+      expect(
+        existsSync(join(projectPath, "conversations", nonemptySlug, "conversation.md"))
+      ).toBe(true);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes a became-empty project conversation's prior subtree via normal rebuild under the default sync policy, without incrementing any empty counter", async () => {
+    const out = mkdtempSync(join(tmpdir(), "cs-sched-empty-proj-"));
+    try {
+      const projectSlug = safeSlug("Project A", "pA");
+      const emptySlug = safeSlug("Empty One", "e1");
+      const projectPath = join(out, "projects", projectSlug);
+      seedProjectConvSubtree(projectPath, emptySlug, "PRIOR CONTENT\n");
+
+      // No onBecameEmpty override -- exercises the "sync" default.
+      const result = await runOrgSync(pAClient(), "org", baseFilesOpts(out, makeController()));
+
+      expect(result.errors).toBe(0);
+      expect(result.skippedEmpty).toBe(0);
+      expect(result.retainedStale).toBe(0);
+      expect(result.cleanedEmpty).toBe(0);
+
+      // Normal rebuild: the subtree is gone (it's a genuine sync of the
+      // remote deletion), but no became-empty counter moved for it.
+      expect(existsSync(join(projectPath, "conversations", emptySlug))).toBe(false);
     } finally {
       rmSync(out, { recursive: true, force: true });
     }

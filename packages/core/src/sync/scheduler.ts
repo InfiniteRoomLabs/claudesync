@@ -9,7 +9,7 @@ import type {
 } from "../models/types.js";
 import { fetchAndBuild, type FetchAndBuildResult } from "./fetch.js";
 import { syncConversation, type ExportFormat } from "./incremental.js";
-import type { OnBecameEmpty } from "./empty.js";
+import { decideEmptyAction, type OnBecameEmpty } from "./empty.js";
 import {
   assembleProjectBundle,
   writeProjectBundle,
@@ -63,7 +63,19 @@ export type ProgressEvent =
       type: "conv-done";
       /** Whether the conversation belongs to a project or is standalone. */
       kind: "project" | "standalone";
-      /** What happened, e.g. `"exported"` for project convs or the standalone sync action. */
+      /**
+       * What happened to this conversation. For project conversations:
+       * `"exported"` (normal fetch-and-build), `"skipped-empty"` (empty, no
+       * prior `conversations/<slug>` subtree on disk), `"full"` (empty,
+       * prior subtree existed, {@link RunOrgSyncOptions.onBecameEmpty} is
+       * `"sync"` -- the rebuilt bundle omits it like any other remote
+       * deletion), `"retained-stale"` (empty, prior subtree preserved via an
+       * injected preserve glob), or `"cleaned-empty"` (empty, prior subtree
+       * dropped by the rebuild with no preserve glob). For standalone
+       * conversations, see {@link syncConversation}'s action values
+       * (`"full"`, `"incremental"`, `"skipped"`, `"skipped-empty"`,
+       * `"retained-stale"`, `"cleaned-empty"`).
+       */
       action: string;
       /** Human-readable conversation label from {@link displayName}. */
       displayName: string;
@@ -122,11 +134,14 @@ export interface RunOrgSyncOptions {
    * empty bundle for them. Defaults to `true` (same default as
    * {@link SyncConversationOptions.skipEmpty}). Threaded into every
    * standalone {@link syncConversation} call; project conversations are
-   * detected the same way (via {@link fetchAndBuild}'s `detectEmpty`) but
-   * have no per-conversation persisted state to consult, so an empty
-   * project conversation is always excluded from its project's bundle when
-   * this is `true` -- see {@link onBecameEmpty}'s doc for why the other
-   * policies are unreachable there.
+   * detected the same way (via {@link fetchAndBuild}'s `detectEmpty`). An
+   * empty project conversation is always excluded from the current run's
+   * `built` accumulator that feeds its project's rebuilt bundle -- the
+   * bundle always reflects the remote conversation list, so a conversation
+   * with zero human messages is never re-materialized into it. What happens
+   * to that conversation's *prior* output subtree, if one exists, is
+   * governed by {@link onBecameEmpty}; see its doc for the directory-
+   * existence proxy and per-policy behavior.
    */
   skipEmpty?: boolean;
   /**
@@ -134,14 +149,35 @@ export interface RunOrgSyncOptions {
    * exists; see {@link OnBecameEmpty} for what each value does. Defaults to
    * `"sync"`. Fully honored for standalone conversations, which persist
    * per-conversation sync state and pass this straight through to
-   * {@link syncConversation}. Project conversations have no equivalent
-   * persisted state -- a project's bundle is always fully rebuilt from the
-   * conversations fetched in the current run (see `exportToGit`, which
-   * never appends) -- so `decideEmptyAction` is always called with
-   * `hasPriorState: false` for them, which only ever resolves to `"skip"`.
-   * This option is still accepted for project conversations for API
-   * symmetry with the standalone path and to leave room for a future task
-   * that adds per-project-conversation state.
+   * {@link syncConversation}.
+   *
+   * Project conversations have no equivalent persisted per-conversation
+   * state -- a project's bundle is always fully rebuilt from the
+   * conversations fetched in the current run. `hasPriorState` for
+   * {@link decideEmptyAction} is instead proxied by whether
+   * `conversations/<slug>` already exists under the project's *current*
+   * output directory (checked via `fs.existsSync` before that project's
+   * rebuild runs, at the same barrier where all its conversation fetches
+   * have settled -- see {@link handleEmptyProjectConv}). Given prior state
+   * present, the per-policy project-bundle behavior is:
+   *
+   * - `"sync"` (default): the conversation is excluded from the rebuilt
+   *   bundle like any other remote deletion, so its subtree disappears --
+   *   ordinary rebuild behavior, not tracked by any of the three empty
+   *   counters below.
+   * - `"retain"`: the conversation is excluded from the rebuilt bundle, but
+   *   a preserve glob (`conversations/<slug>/**`) is injected into that
+   *   project's {@link writeProjectBundle} call so `replaceWithPreserve`
+   *   rescues the prior subtree byte-identical from the `.prev` stash.
+   *   Counted in {@link RunOrgSyncResult.retainedStale}.
+   * - `"clean"`: the conversation is excluded from the rebuilt bundle with
+   *   no preserve glob, so the rebuild deletes the subtree (this is the
+   *   bundle-native meaning of "clean" -- there is no separate delete step).
+   *   Counted in {@link RunOrgSyncResult.cleanedEmpty}.
+   *
+   * With no prior subtree on disk, the conversation always resolves to
+   * `"skip"` regardless of policy, counted in
+   * {@link RunOrgSyncResult.skippedEmpty}.
    */
   onBecameEmpty?: OnBecameEmpty;
 }
@@ -156,25 +192,32 @@ export interface RunOrgSyncResult {
   errors: number;
   /**
    * Number of conversations (standalone plus project-attached) skipped as
-   * `"skipped-empty"`: zero human messages and no prior sync state to
-   * reconcile. Excluded from any project bundle; no directory or state
-   * written for standalone ones.
+   * `"skipped-empty"`: zero human messages and no prior state to reconcile.
+   * For standalone conversations "prior state" is the persisted sync state
+   * file; for project conversations it is the directory-existence proxy
+   * described on {@link RunOrgSyncOptions.onBecameEmpty} (no prior
+   * `conversations/<slug>` subtree on disk). Excluded from any project
+   * bundle; no directory or state written for standalone ones.
    */
   skippedEmpty: number;
   /**
-   * Number of standalone conversations resolved as `"retained-stale"`:
-   * became empty, prior state existed, and {@link RunOrgSyncOptions.onBecameEmpty}
-   * is `"retain"`. Always `0` for project conversations -- see
-   * {@link RunOrgSyncOptions.onBecameEmpty}'s doc for why that policy is
-   * unreachable there.
+   * Number of conversations (standalone plus project-attached) resolved as
+   * `"retained-stale"`: became empty, prior state existed, and
+   * {@link RunOrgSyncOptions.onBecameEmpty} is `"retain"`. For project
+   * conversations, "prior state" is the directory-existence proxy described
+   * on {@link RunOrgSyncOptions.onBecameEmpty}; the prior
+   * `conversations/<slug>` subtree is rescued byte-identical from the
+   * `.prev` stash via an injected preserve glob rather than being rebuilt.
    */
   retainedStale: number;
   /**
-   * Number of standalone conversations resolved as `"cleaned-empty"`:
-   * became empty, prior state existed, and {@link RunOrgSyncOptions.onBecameEmpty}
-   * is `"clean"`. Always `0` for project conversations -- see
-   * {@link RunOrgSyncOptions.onBecameEmpty}'s doc for why that policy is
-   * unreachable there.
+   * Number of conversations (standalone plus project-attached) resolved as
+   * `"cleaned-empty"`: became empty, prior state existed, and
+   * {@link RunOrgSyncOptions.onBecameEmpty} is `"clean"`. For project
+   * conversations, "prior state" is the directory-existence proxy described
+   * on {@link RunOrgSyncOptions.onBecameEmpty}; the prior
+   * `conversations/<slug>` subtree is simply omitted from the rebuilt
+   * bundle, which deletes it.
    */
   cleanedEmpty: number;
 }
@@ -238,6 +281,15 @@ interface ProjectAccumulator {
   outstanding: number;
   /** uuid -> collision-safe slug for this project's conversations. */
   convSlugs: Map<string, string>;
+  /**
+   * Extra preserve globs for this project's finalize write, appended to the
+   * run's global {@link RunOrgSyncOptions.preserve} in {@link finalizeProject}.
+   * Populated when a became-empty conversation resolves to `"retain"` (see
+   * {@link handleEmptyProjectConv}): `conversations/<slug>/**` is pushed here
+   * so {@link writeProjectBundle}'s `replaceWithPreserve` rescues that prior
+   * subtree from the `.prev` stash instead of letting the rebuild delete it.
+   */
+  extraPreserveGlobs: string[];
 }
 
 /**
@@ -413,7 +465,10 @@ export async function runOrgSync(
       "projects",
       slugFor(projectSlugs, acc.project.name, acc.project.uuid)
     );
-    await writeProjectBundle(bundle, projectPath, format, preserve);
+    await writeProjectBundle(bundle, projectPath, format, [
+      ...preserve,
+      ...acc.extraPreserveGlobs,
+    ]);
     emit({
       type: "project-done",
       project: displayName(acc.project.name, acc.project.uuid),
@@ -471,6 +526,7 @@ export async function runOrgSync(
       built: [],
       outstanding: projConvs.length,
       convSlugs: disambiguateSlugs(projConvs),
+      extraPreserveGlobs: [],
     });
 
     if (projConvs.length === 0) {
@@ -511,6 +567,87 @@ export async function runOrgSync(
   }
 
   /**
+   * Resolve a project conversation whose fetch reported zero human messages
+   * (`fetchAndBuild`'s `detectEmpty` path): apply
+   * {@link RunOrgSyncOptions.onBecameEmpty} via a directory-existence proxy,
+   * emit the resulting `conv-done` event, tally the appropriate counter, and
+   * settle the conversation against its project accumulator (never with a
+   * built entry -- an empty conversation is excluded from the rebuilt bundle
+   * under every policy; only whether its *prior* subtree survives differs).
+   *
+   * Project conversations have no per-conversation persisted sync state, so
+   * `hasPriorState` for {@link decideEmptyAction} is proxied by whether
+   * `conversations/<slug>` already exists under the project's current output
+   * directory (`fs.existsSync`). This check runs before the project's
+   * finalize write (the barrier in {@link settleProjectConv} guarantees every
+   * conversation, including this one, settles before {@link finalizeProject}
+   * touches disk for this project), so it reflects last run's on-disk state,
+   * not this run's in-progress rebuild.
+   *
+   * @param task - The project-conv task whose fetch resolved to `{ empty: true }`.
+   */
+  async function handleEmptyProjectConv(task: ProjectConvTask): Promise<void> {
+    const acc = accs.get(task.projectId);
+    const slug =
+      acc?.convSlugs.get(task.conv.uuid) ?? safeSlug(task.conv.name, task.conv.uuid);
+    const projectPath = acc
+      ? resolve(
+          outputRoot,
+          "projects",
+          slugFor(projectSlugs, acc.project.name, acc.project.uuid)
+        )
+      : undefined;
+    const priorSubtreeExists =
+      projectPath !== undefined &&
+      existsSync(resolve(projectPath, "conversations", slug));
+    const policy = options.onBecameEmpty ?? "sync";
+    const action = decideEmptyAction(priorSubtreeExists, policy);
+
+    let progressAction: string;
+    switch (action) {
+      case "skip":
+        skippedEmpty += 1;
+        progressAction = "skipped-empty";
+        break;
+      case "materialize-full":
+        // Prior subtree exists and policy is "sync": still exclude from the
+        // rebuilt bundle -- the bundle always reflects the remote
+        // conversation list -- so the subtree disappears exactly as any
+        // other remote deletion would on rebuild. This is ordinary rebuild
+        // behavior, not a became-empty special case, so it does not
+        // increment skippedEmpty/retainedStale/cleanedEmpty.
+        progressAction = "full";
+        break;
+      case "retain":
+        // Prior subtree exists and policy is "retain": exclude from the
+        // rebuilt bundle, but inject a preserve glob so writeProjectBundle's
+        // replaceWithPreserve rescues the prior subtree byte-identical from
+        // the .prev stash instead of letting the rebuild drop it.
+        retainedStale += 1;
+        acc?.extraPreserveGlobs.push(`conversations/${slug}/**`);
+        progressAction = "retained-stale";
+        break;
+      case "clean":
+        // Prior subtree exists and policy is "clean": exclude from the
+        // rebuilt bundle with no preserve glob, so the rebuild deletes it.
+        cleanedEmpty += 1;
+        progressAction = "cleaned-empty";
+        break;
+    }
+
+    convCompleted += 1;
+    emit({
+      type: "conv-done",
+      kind: "project",
+      action: progressAction,
+      displayName: displayName(task.conv.name, task.conv.uuid),
+      completed: convCompleted,
+      total: convTotal,
+    });
+    await settleProjectConv(task.projectId);
+  }
+
+  /**
    * Fetch and build one project conversation via {@link fetchAndBuild} (no disk
    * I/O), emit `conv-done`, then hand the built bundle to
    * {@link settleProjectConv}, which writes the project once it is the last
@@ -519,11 +656,9 @@ export async function runOrgSync(
    *
    * When {@link RunOrgSyncOptions.skipEmpty} is in effect (the default), the
    * fetch runs with `detectEmpty: true`; a conversation found to have zero
-   * human messages is excluded from the project's bundle entirely (settled
-   * with no built entry, exactly like a terminally-failed conversation) and
-   * counted in `skippedEmpty` instead of being fetched further or committed.
-   * See {@link RunOrgSyncOptions.onBecameEmpty}'s doc for why only the "skip"
-   * outcome is reachable for project conversations.
+   * human messages is handed to {@link handleEmptyProjectConv}, which applies
+   * {@link RunOrgSyncOptions.onBecameEmpty} via the directory-existence proxy
+   * and settles the conversation itself.
    *
    * @param task - The project-conv task identifying the conversation.
    */
@@ -540,22 +675,7 @@ export async function runOrgSync(
         detectEmpty: true,
       });
       if ("empty" in fetched) {
-        // Project conversations have no per-conversation persisted sync
-        // state -- the project bundle is always rebuilt fully from the
-        // conversations fetched this run -- so decideEmptyAction would
-        // always resolve to "skip" here regardless of onBecameEmpty; see
-        // RunOrgSyncOptions.onBecameEmpty's doc.
-        skippedEmpty += 1;
-        convCompleted += 1;
-        emit({
-          type: "conv-done",
-          kind: "project",
-          action: "skipped-empty",
-          displayName: displayName(task.conv.name, task.conv.uuid),
-          completed: convCompleted,
-          total: convTotal,
-        });
-        await settleProjectConv(task.projectId);
+        await handleEmptyProjectConv(task);
         return;
       }
       built = fetched;
