@@ -146,6 +146,28 @@ export class FileSink implements SinkSurface {
   }
 
   /**
+   * Whether `ref`'s output directory carries a parseable
+   * `.claudesync-state.json` sidecar -- i.e. whether this sink actually wrote
+   * `ref` before, as distinct from {@link exists}'s mere path-existence
+   * check. Resolves the same directory {@link stat} reads
+   * ({@link stateDir}), and treats an absent or unparseable sidecar
+   * identically (both resolve `false`): this is the closed near-miss where a
+   * directory existing at the target path (e.g. an entire export archive
+   * root pointed at by mistake) was previously enough to make the
+   * became-empty `"clean"` policy engage on it.
+   *
+   * @param ref - Item to check.
+   * @returns `true` iff {@link stateDir}'s sidecar exists and parses.
+   */
+  async hasPriorState(ref: ItemRef): Promise<boolean> {
+    try {
+      return readSyncState(this.stateDir(ref)) !== undefined;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Materialize `item` under {@link pathFor}. A pre-rendered `item.tree`
    * (`cc://` and other Class-D sources) is written verbatim via
    * `writeTreeWithPreserve`; an `item.isEmpty` item is handled by

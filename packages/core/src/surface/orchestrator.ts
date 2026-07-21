@@ -70,17 +70,22 @@ export interface SyncOptions {
  *
  * After the read, when the item carries {@link CanonicalItem.isEmpty} and
  * {@link SyncOptions.skipEmpty} is not `false`, each sink is routed through the
- * became-empty policy instead of an unconditional write: no prior output on
- * that sink (`sink.exists` false) -> `"skipped-empty"`; prior output exists ->
- * {@link decideEmptyAction} on `opts.onBecameEmpty ?? "sync"` selects
- * `"retain"` (`"retained-stale"`, no write), `"clean"` (a write carrying
- * {@link ApplyOpts.cleanEmpty}), or `"materialize-full"` (a normal write with
- * `prevState` forced to `null`, mirroring `syncConversation`'s forced-full
- * rebuild for a became-empty `"sync"` policy). This reacts only to the neutral
- * `isEmpty` marker and the neutral `skipEmpty`/`onBecameEmpty` options -- it
- * never inspects messages, senders, or any other source-specific field, so a
- * source with no concept of emptiness (which never sets `isEmpty`) is
- * completely unaffected by this branch.
+ * became-empty policy instead of an unconditional write: whether the sink
+ * holds prior state is decided by
+ * `sink.hasPriorState?.(ref) ?? sink.exists(ref)` -- {@link SinkSurface.hasPriorState}
+ * when the sink implements it (true iff a claudesync-managed sidecar parses
+ * for this ref, not mere path existence), falling back to
+ * {@link SinkSurface.exists} only for sinks that don't. No prior state ->
+ * `"skipped-empty"`; prior state exists -> {@link decideEmptyAction} on
+ * `opts.onBecameEmpty ?? "sync"` selects `"retain"` (`"retained-stale"`, no
+ * write), `"clean"` (a write carrying {@link ApplyOpts.cleanEmpty}), or
+ * `"materialize-full"` (a normal write with `prevState` forced to `null`,
+ * mirroring `syncConversation`'s forced-full rebuild for a became-empty
+ * `"sync"` policy). This reacts only to the neutral `isEmpty` marker and the
+ * neutral `skipEmpty`/`onBecameEmpty` options -- it never inspects messages,
+ * senders, or any other source-specific field, so a source with no concept of
+ * emptiness (which never sets `isEmpty`) is completely unaffected by this
+ * branch.
  *
  * @param source - The single source whose items are enumerated and read.
  * @param sinks - One or more sinks each item is written to.
@@ -121,7 +126,7 @@ export async function sync(
       if (!item) item = await source.read(ref);
 
       if (item.isEmpty && opts.skipEmpty !== false) {
-        const hasPriorOutput = await sink.exists(ref);
+        const hasPriorOutput = await (sink.hasPriorState?.(ref) ?? sink.exists(ref));
         if (!hasPriorOutput) {
           results.push(
             skipResult(ref, "skipped-empty", "item is empty and has no prior sink output to reconcile")

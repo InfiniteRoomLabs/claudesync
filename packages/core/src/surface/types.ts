@@ -277,6 +277,26 @@ export interface SinkSurface extends Location {
    */
   stat(ref: ItemRef): Promise<SinkState | null>;
   /**
+   * Whether the sink holds prior CLAUDESYNC-MANAGED state for `ref` -- not
+   * mere path existence.
+   *
+   * Optional so existing/minimal {@link SinkSurface} implementations keep
+   * working unchanged; callers that need the distinction should prefer this
+   * over {@link SinkSurface.exists} when deciding whether to engage a
+   * destructive became-empty policy, falling back to
+   * {@link SinkSurface.exists} only when a sink does not implement this
+   * method. A sink whose target directory exists but was never written by
+   * claudesync (no parseable state sidecar) must resolve `false` here even
+   * though {@link SinkSurface.exists} would resolve `true` for the same
+   * `ref` -- that gap (a directory existing but never having been written by
+   * claudesync) is exactly what a directory-existence-only proxy gets wrong.
+   *
+   * @param ref - Item to check.
+   * @returns `true` iff the sink holds prior claudesync-managed state for
+   *   this item.
+   */
+  hasPriorState?(ref: ItemRef): Promise<boolean>;
+  /**
    * Persist `item`.
    *
    * @param item - The canonical payload to write.

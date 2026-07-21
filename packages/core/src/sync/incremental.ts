@@ -240,6 +240,42 @@ async function handleBecameEmpty(
 }
 
 /**
+ * Guards {@link cleanEmptyConversation} against mistaking an arbitrary
+ * existing directory for a claudesync-managed conversation directory.
+ *
+ * This is the fix for a near-miss incident: `sink.exists()` / `fs.existsSync`
+ * only prove that *some* directory is at the target path -- not that
+ * claudesync ever wrote it. When the target was accidentally an entire
+ * export archive root (or any other unrelated directory that happens to
+ * exist), that false proxy let the became-empty `"clean"` policy attempt a
+ * preserve-aware stash-and-rewrite of the WHOLE directory. Reading and
+ * parsing the {@link STATE_FILENAME} sidecar is the actual proof: only a
+ * directory previously written by claudesync carries one.
+ *
+ * @param dir - Directory expected to hold the {@link STATE_FILENAME} sidecar
+ *   (the conversation directory for `git`/`files`, or the parent directory
+ *   of the `<slug>.json` stem for `json`).
+ * @throws If the sidecar is absent or fails to parse. The message names only
+ *   `dir` -- never any content read from within it.
+ */
+function assertClaudesyncManagedDirectory(dir: string): void {
+  let state: SyncState | undefined;
+  try {
+    state = readSyncState(dir);
+  } catch {
+    // Corrupted/unparseable sidecar counts as "no valid sidecar" for this
+    // guard -- same as if the file were absent.
+    state = undefined;
+  }
+  if (!state) {
+    throw new Error(
+      `Refusing to clean "${dir}": no claudesync state sidecar (${STATE_FILENAME}) found here. ` +
+        "This does not look like a claudesync-managed conversation directory."
+    );
+  }
+}
+
+/**
  * Replaces a conversation's generated on-disk content with an empty set,
  * for the became-empty `"clean"` policy. Reuses {@link replaceWithPreserve}
  * for `git`/`files` formats (both address `outputPath` as a real directory)
@@ -249,6 +285,11 @@ async function handleBecameEmpty(
  * returns. `json` format has no directory to reconcile -- it is a single
  * `<outputPath>.json` file -- so that case just removes the file directly.
  *
+ * Before any filesystem mutation, calls {@link assertClaudesyncManagedDirectory}
+ * on the directory that should hold the state sidecar. This protects both
+ * call paths that reach this function: the legacy `syncConversation` ->
+ * `handleBecameEmpty` path, and the surface seam's `FileSink.writeEmpty`.
+ *
  * Exported (in addition to being used by `handleBecameEmpty` above) so the
  * surface seam's `FileSink` can perform the identical clean for its
  * `ApplyOpts.cleanEmpty` directive without duplicating the preserve/drop logic.
@@ -257,12 +298,17 @@ async function handleBecameEmpty(
  *   stem (the actual file is `outputPath + ".json"`).
  * @param format - On-disk layout in effect for this conversation.
  * @param preserve - Files-mode preserve globs, relative to `outputPath`.
+ * @throws If the target directory has no parseable state sidecar; see
+ *   {@link assertClaudesyncManagedDirectory}. Thrown before any write.
  */
 export async function cleanEmptyConversation(
   outputPath: string,
   format: ExportFormat,
   preserve: readonly string[]
 ): Promise<void> {
+  const stateDir = format === "json" ? path.dirname(outputPath) : outputPath;
+  assertClaudesyncManagedDirectory(stateDir);
+
   if (format === "json") {
     const jsonPath = outputPath + ".json";
     if (fs.existsSync(jsonPath)) {
