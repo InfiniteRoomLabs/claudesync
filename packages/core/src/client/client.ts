@@ -127,9 +127,15 @@ export class ClaudeSyncClient {
    * cross-cutting concern shared by all HTTP calls on this client: limiter slot
    * acquisition, auth-header injection, 429 mapping, and non-2xx mapping.
    *
-   * `init.headers` (if given) is layered on top of the auth headers, so a
-   * caller can add e.g. `content-type` without losing the session cookie.
-   * {@link ClaudeSyncClient.request} and {@link ClaudeSyncClient.requestRaw} are
+   * `init.headers` (if given) is layered on top of the auth headers using a
+   * {@link Headers} instance, so the merge is case-insensitive: a caller
+   * setting `content-type` replaces an auth-provider `Content-Type` (or vice
+   * versa) instead of both surviving as duplicate header entries -- `fetch`
+   * would otherwise join same-name headers with a comma (e.g.
+   * `application/json, application/json`), which claude.ai's API rejects
+   * with a 400. Auth headers not overridden by the caller (e.g. `Cookie`)
+   * always survive the merge. {@link ClaudeSyncClient.request} and
+   * {@link ClaudeSyncClient.requestRaw} are
    * both thin wrappers over this method; every other client method funnels
    * through one of those two, so this is the single choke point for transport
    * behavior.
@@ -149,7 +155,12 @@ export class ClaudeSyncClient {
     await this.limiter.acquireRequestSlot();
 
     const authHeaders = await this.auth.getHeaders();
-    const headers = { ...authHeaders, ...(init?.headers as Record<string, string> | undefined) };
+    const headers = new Headers(authHeaders as Record<string, string>);
+    if (init?.headers) {
+      new Headers(init.headers as HeadersInit).forEach((value, key) => {
+        headers.set(key, value);
+      });
+    }
     const response = await fetch(url, { ...init, headers });
 
     if (response.status === 429) {
@@ -297,6 +308,58 @@ export class ClaudeSyncClient {
       buildUrl(ENDPOINTS.conversation(orgId, chatId, options))
     );
     return ConversationSchema.parse(data);
+  }
+
+  /**
+   * Rename a conversation via `PUT chat_conversations/<id>` with a partial-update
+   * body of `{ name }`. The endpoint answers 202 with the updated conversation
+   * summary; the body is intentionally not parsed or validated -- callers who
+   * need the fresh summary should re-fetch via {@link ClaudeSyncClient.getConversation}.
+   *
+   * Un-naming (setting `name` back to `""`) is deliberately not exposed here in
+   * v1, even though the endpoint accepts it (spike-confirmed reversible) --
+   * rejecting empty/whitespace-only `name` client-side keeps the write's
+   * surface area to "give this conversation a title."
+   *
+   * Like {@link ClaudeSyncClient.putProjectMemoryControls}, this call is
+   * **never retried** automatically: a 429 or 5xx surfaces directly to the
+   * caller. Unlike that call, there is no ambiguous "did it apply" timeout
+   * window to reason about -- this is an undocumented, fast, single-field
+   * write with no documented idempotency contract beyond the spike's manual
+   * probing, so retrying blind on this client's own initiative is not
+   * something to build in speculatively. If a caller's rename command fails
+   * partway through a batch, re-running that command is the resume path: the
+   * spike found same-value re-assignment idempotent (202, no error), so a
+   * retried rename of an already-renamed conversation is harmless.
+   *
+   * @param orgId - Organization UUID.
+   * @param conversationId - Conversation UUID.
+   * @param name - The new title. Must contain at least one non-whitespace
+   * character; un-naming is not supported by this method.
+   * @throws {@link Error} if `name` is empty or whitespace-only. Thrown before
+   * any network call is made, and the message never echoes the rejected value.
+   * @throws {@link RateLimitError} on HTTP 429.
+   * @throws {@link ClaudeSyncError} on any other non-2xx response.
+   */
+  async renameConversation(
+    orgId: string,
+    conversationId: string,
+    name: string
+  ): Promise<void> {
+    if (name.trim() === "") {
+      throw new Error(
+        `renameConversation: name must be non-empty after trimming whitespace (conversationId: ${conversationId})`
+      );
+    }
+
+    await this.requestResponse(
+      buildUrl(ENDPOINTS.conversation(orgId, conversationId)),
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      }
+    );
   }
 
   /**

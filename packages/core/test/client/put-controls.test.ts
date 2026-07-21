@@ -9,6 +9,10 @@ function createMockAuth(): AuthProvider {
     getHeaders: async () => ({
       Cookie: "test-cookie",
       "User-Agent": "test-agent",
+      // Mirrors the REAL providers (EnvAuth/FirefoxProfileAuth), which send a
+      // capitalized Content-Type. Without this, the duplicate-header regression
+      // tests cannot reproduce the case-collision the fix guards against.
+      "Content-Type": "application/json",
     }),
     getOrganizationId: async () => "org-123",
   };
@@ -39,8 +43,37 @@ describe("putProjectMemoryControls", () => {
       "https://claude.ai/api/organizations/org-123/memory/controls?project_uuid=proj%20456"
     );
     expect(init.method).toBe("PUT");
-    expect(init.headers).toMatchObject({ "content-type": "application/json" });
+    expect(new Headers(init.headers).get("content-type")).toBe(
+      "application/json"
+    );
     expect(init.body).toBe(JSON.stringify({ controls: ["entry-a", "entry-b"] }));
+  });
+
+  it("merges the lowercase content-type from the caller with the auth headers case-insensitively, without duplicating content-type", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify(null), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client().putProjectMemoryControls("org-123", "proj-456", [
+      "entry-a",
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentHeaders = new Headers(init.headers);
+
+    // Exactly one content-type value, and it is not a comma-joined
+    // duplicate of "application/json" from a case-insensitive collision
+    // between the auth provider's "Content-Type" and the caller's
+    // lowercase "content-type".
+    const contentType = sentHeaders.get("content-type");
+    expect(contentType).toBe("application/json");
+    expect(contentType).not.toContain(",");
+
+    // The auth-provided Cookie header must survive the merge -- the
+    // caller's content-type must not wipe unrelated auth headers.
+    expect(sentHeaders.get("cookie")).toBe("test-cookie");
   });
 
   it("resolves void on a 200 response with a null body", async () => {

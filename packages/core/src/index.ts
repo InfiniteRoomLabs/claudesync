@@ -205,6 +205,21 @@ export type {
 // Naming helpers -- slugify titles into filesystem-safe names
 export { slugify, safeSlug, displayName } from "./util/naming.js";
 
+// Conversation title derivation -- pure, grapheme-safe title from the opening human message
+export { deriveConversationTitle, MAX_TITLE_GRAPHEMES } from "./conversations/title.js";
+
+// Resolve-names batch planner -- pure selection, per-conversation planning, and
+// ambiguous-outcome classification for the resolve-unnamed-conversations feature
+export type {
+  SelectUnnamedConversationsOptions,
+  ResolveNameCandidate,
+} from "./conversations/resolve-names.js";
+export {
+  selectUnnamedConversations,
+  planRename,
+  classifyAmbiguousRename,
+} from "./conversations/resolve-names.js";
+
 // Glob helpers -- compile and match glob patterns for path filtering
 export { matchGlob, matchAnyGlob, compileGlob } from "./util/glob.js";
 
