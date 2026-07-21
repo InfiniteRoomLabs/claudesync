@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-07-20
+
+### Fixed
+- **Empty-conversation policy writes could target directories claudesync does not own.** `export <uuid> --output <dir> --on-became-empty clean` against a directory with no claudesync state sidecar engaged the clean path on the bare directory-exists check -- pointed at an archive root, it attempted a preserve-aware stash-and-rewrite of the entire tree (a live dogfooding run was saved only by Docker's un-renamable mount point). Two independent guards now block this: `cleanEmptyConversation` refuses any directory without a parseable `.claudesync-state.json` before touching the filesystem, and the surface seam's prior-state check is now a real state-sidecar probe (`SinkSurface.hasPriorState`) instead of mere path existence -- an unowned directory takes the no-writes `skipped-empty` path. Regression tests pin both layers, including byte-survival of non-claudesync files.
+
 ## [0.11.0] - 2026-07-20
 
 ### Added
