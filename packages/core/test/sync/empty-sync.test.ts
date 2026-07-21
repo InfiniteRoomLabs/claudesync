@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { syncConversation } from "@core/sync/incremental.js";
+import { syncConversation, cleanEmptyConversation } from "@core/sync/incremental.js";
 import { writeSyncState, readSyncState, type SyncState } from "@core/sync/state.js";
 import type { ClaudeSyncClient } from "@core/client/client.js";
 import type {
@@ -298,5 +298,48 @@ describe("syncConversation: empty-conversation handling", () => {
     // No additional hydration: skip-same short-circuits before fetchAndBuild.
     expect(calls.getConversation).toEqual(["conv-1"]);
     expect(calls.listArtifacts).toEqual([]);
+  });
+});
+
+describe("cleanEmptyConversation: refuses to operate on a directory with no state sidecar", () => {
+  it("throws and leaves an arbitrary directory's contents byte-untouched (near-miss regression)", async () => {
+    // Regression for the live near-miss: `cleanEmptyConversation` must never
+    // treat "directory exists" as proof of "this is a claudesync-managed
+    // conversation directory". Here outputPath stands in for what could be
+    // an entire export archive root or any other directory that merely
+    // happens to exist -- it holds arbitrary files but no
+    // .claudesync-state.json sidecar.
+    mkdirSync(outputPath, { recursive: true });
+    writeFileSync(join(outputPath, "unrelated-user-file.txt"), "do not touch me\n", "utf-8");
+    mkdirSync(join(outputPath, "some-other-conversation"), { recursive: true });
+    writeFileSync(
+      join(outputPath, "some-other-conversation", "conversation.md"),
+      "## Human\n\nSomeone else's conversation\n",
+      "utf-8"
+    );
+
+    await expect(cleanEmptyConversation(outputPath, "files", [])).rejects.toThrow(
+      /claudesync state sidecar/i
+    );
+
+    // Directory contents must survive byte-for-byte -- no stash-and-rewrite
+    // was allowed to touch anything.
+    expect(readFileSync(join(outputPath, "unrelated-user-file.txt"), "utf-8")).toBe(
+      "do not touch me\n"
+    );
+    expect(
+      readFileSync(join(outputPath, "some-other-conversation", "conversation.md"), "utf-8")
+    ).toBe("## Human\n\nSomeone else's conversation\n");
+    expect(existsSync(join(outputPath, ".claudesync-state.json"))).toBe(false);
+    expect(existsSync(outputPath + ".prev")).toBe(false);
+  });
+
+  it("proceeds normally when a valid state sidecar is present", async () => {
+    seedPriorSync();
+
+    await expect(cleanEmptyConversation(outputPath, "files", [])).resolves.toBeUndefined();
+
+    expect(existsSync(join(outputPath, "conversation.md"))).toBe(false);
+    expect(existsSync(join(outputPath, "CHANGELOG.md"))).toBe(true);
   });
 });

@@ -332,4 +332,63 @@ describe("surface seam: neutral isEmpty handling", () => {
 
     expect(readTree(dirOn)).toEqual(readTree(dirOff));
   });
+
+  it("FileSink: empty item + output dir exists but has NO state sidecar -> skipped-empty, marker untouched, no writes", async () => {
+    const seamDir = path.join(mkTmp(), "conv");
+    // The directory exists -- e.g. it could be an arbitrary directory, or an
+    // entire export archive root mistakenly pointed at as a conversation's
+    // output -- but was never synced by claudesync, so it has no
+    // .claudesync-state.json sidecar. sink.exists(ref) alone would say
+    // "true"; hasPriorState must say "false".
+    fs.mkdirSync(seamDir, { recursive: true });
+    const markerPath = path.join(seamDir, "marker.txt");
+    fs.writeFileSync(markerPath, "do not touch\n", "utf-8");
+
+    const source = new ClaudeSource(mockClient(emptyConversation("conv-1"), emptySummary), "org", authOpts);
+    const sink = new FileSink(seamDir, "files");
+    const writeSpy = vi.spyOn(sink, "write");
+
+    const results = await sync(source, [sink], {
+      selector: { conversationId: "conv-1" },
+      format: "files",
+      ...authOpts,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].action).toBe("skipped-empty");
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(fs.readFileSync(markerPath, "utf-8")).toBe("do not touch\n");
+    expect(fs.existsSync(path.join(seamDir, ".claudesync-state.json"))).toBe(false);
+  });
+
+  it("FileSink: empty item + output dir exists WITH a valid state sidecar -> policy engages normally (clean removes generated content)", async () => {
+    const seamDir = path.join(mkTmp(), "conv");
+
+    const seedSource = new ClaudeSource(mockClient(nonEmptyConversation("conv-1"), nonEmptySummary), "org", authOpts);
+    const seedSink = new FileSink(seamDir, "files");
+    await sync(seedSource, [seedSink], {
+      selector: { conversationId: "conv-1" },
+      format: "files",
+      ...authOpts,
+    });
+    expect(fs.existsSync(path.join(seamDir, ".claudesync-state.json"))).toBe(true);
+    expect(fs.existsSync(path.join(seamDir, "conversation.md"))).toBe(true);
+
+    const source = new ClaudeSource(mockClient(emptyConversation("conv-1"), emptySummary), "org", authOpts);
+    const sink = new FileSink(seamDir, "files");
+    const writeSpy = vi.spyOn(sink, "write");
+
+    const results = await sync(source, [sink], {
+      selector: { conversationId: "conv-1" },
+      format: "files",
+      onBecameEmpty: "clean",
+      ...authOpts,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].action).toBe("cleaned-empty");
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(path.join(seamDir, "conversation.md"))).toBe(false);
+    expect(fs.existsSync(path.join(seamDir, "CHANGELOG.md"))).toBe(true);
+  });
 });
