@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-07-23
+
+### Fixed
+- **Two Claude Code sessions in the same directory could not both run the MCP server.** The wrapper named its container after the working directory alone, so a second session (or a leftover container from a crashed one) hit docker's duplicate-name rejection and surfaced as a `-32000` MCP connect error. The container name now carries the wrapper's PID (`claudesync-mcp-<dir>-<pid>`), making every invocation unique. The server also now exits explicitly on stdin EOF, so a lingering handle can never keep a disconnected session's `docker run --rm` container alive (regression-tested). Caught by dogfooding a `-32000` reconnect failure.
+
 ## [0.11.1] - 2026-07-20
 
 ### Fixed

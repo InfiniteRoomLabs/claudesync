@@ -9,4 +9,7 @@ _b="${XDG_DATA_HOME:-${HOME}/.local/share}/claudesync/harvest-cookie.sh"
 _c="$(sh "${_b}" 2>/dev/null)" || _mcp_error "Could not read sessionKey cookie"
 [ -n "${_c}" ] || _mcp_error "Could not read sessionKey cookie"
 _proj="$(basename "$(pwd)" | sed 's/[^a-zA-Z0-9_-]/-/g' | cut -c1-10)"
-exec docker run --rm -i --name "claudesync-mcp-${_proj}" -e "CLAUDE_AI_COOKIE=${_c}" __REF__
+# PID suffix keeps names unique: concurrent sessions in the same directory
+# (or a stale container from a dead one) must never collide on the container
+# name -- docker rejects duplicate names and the client surfaces it as -32000.
+exec docker run --rm -i --name "claudesync-mcp-${_proj}-$$" -e "CLAUDE_AI_COOKIE=${_c}" __REF__
