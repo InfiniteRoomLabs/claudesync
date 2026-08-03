@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-08-03
+
+### Fixed
+- **v0.11.4 Docker images never published: the image build died on `pnpm deploy --legacy`.** The Dockerfile pinned pnpm 10.32.1 via `corepack prepare`, but once the repo gained a `packageManager: pnpm@9.15.9` field (0.11.4), the corepack shim honored the field inside the project directory and ran pnpm 9 -- where `--legacy` does not exist (`ERROR Unknown option: 'legacy'`). The Dockerfile now relies on the `packageManager` field like everything else and drops `--legacy` (pnpm 9's `deploy` copies non-injected workspace deps by default; the flag only exists in v10+ to restore that behavior). Both image targets verified with local `docker build` before tagging. npm packages and code are otherwise identical to 0.11.4. Caught by the new publish-docker test gate run -- the gate itself passed; the failure was in the image build stage.
+
 ## [0.11.4] - 2026-08-03
 
 ### Fixed
