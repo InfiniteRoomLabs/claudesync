@@ -90,7 +90,8 @@ describe("withProjectMemoryLock", () => {
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
-  it("creates dir owner-only (mode 0o700) if it does not already exist", async () => {
+  // POSIX mode bits are not representable on Windows (fs reports 0o666/0o777).
+  it.skipIf(process.platform === "win32")("creates dir owner-only (mode 0o700) if it does not already exist", async () => {
     const parent = mkdir();
     const target = path.join(parent, "nested", "memory");
     await withProjectMemoryLock(target, async () => undefined, { now });

@@ -63,8 +63,11 @@ Phase 1 deliverables: Core SDK + MCP Server (3 tools: list_orgs, list_convos, ge
 ## Conventions
 
 ### Node/TypeScript
-- **Run `nvm use` before any Node work** (node/pnpm/vitest/tsc/build/scripts). This repo pins Node 24 via `.nvmrc`, but the agent's non-interactive Bash shell defaults to system Node v20 -- `BASH_ENV`/direnv autoswitching does not stick because the harness re-pins `PATH` after startup. So prefix node commands in a compound, e.g. `nvm use && pnpm test`. (Interactive fish auto-switches; this note is for the agent.)
-- Use `pnpm` for package management
+- **Activate the pinned Node 24 before any Node work** (node/pnpm/vitest/tsc/build/scripts).
+  - Linux/macOS (Unix nvm): prefix node commands in a compound, e.g. `nvm use && pnpm test` -- `BASH_ENV`/direnv autoswitching does not stick in the agent's non-interactive shell. (Interactive fish auto-switches; this note is for the agent.)
+  - Windows (nvm-windows, e.g. via scoop): `nvm use` CANNOT read `.nvmrc` -- it errors with "A version argument is required". Pass the version explicitly, e.g. `nvm use 24.14.0` (match `.nvmrc`; the switch is global and persists across shells, so once per machine-version is enough).
+- Use `pnpm` for package management. The exact version is pinned via the `packageManager` field in the root `package.json` -- `corepack enable` once and the right pnpm is used automatically (CI's `pnpm/action-setup` reads the same field; do not re-add a `version:` input there).
+- **A stray `node_modules/@types` in ANY ancestor directory breaks `pnpm build`** with `TS2688: Cannot find type definition file` errors -- TypeScript scans every ancestor's `node_modules/@types` as implicit typeRoots. If tsc fails with TS2688 on names the repo does not use, hunt for and remove accidental `node_modules` in parent folders (this actually happened via a stray `~/Projects/node_modules`).
 - ESM modules (`"type": "module"`)
 - Strict TypeScript (`strict: true`, no `any`)
 - Module resolution: `NodeNext` (requires `.js` extensions on imports)

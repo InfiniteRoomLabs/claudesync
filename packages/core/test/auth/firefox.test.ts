@@ -77,7 +77,9 @@ describe("FirefoxProfileAuth", () => {
     it("uses explicitly provided profilePath without discovery", () => {
       // The profilePath itself must exist (cookies.sqlite check)
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         return path.endsWith("cookies.sqlite");
       });
 
@@ -96,7 +98,9 @@ describe("FirefoxProfileAuth", () => {
   describe("profiles.ini parsing", () => {
     it("resolves the default profile from profiles.ini", () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         // Firefox root exists
         if (path.endsWith("/firefox") || path.endsWith("/.mozilla/firefox"))
           return true;
@@ -122,7 +126,9 @@ describe("FirefoxProfileAuth", () => {
 
     it("falls back to first profile when no Default=1 is set", () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         if (path.endsWith("/firefox") || path.endsWith("/.mozilla/firefox"))
           return true;
         if (path.endsWith("profiles.ini")) return true;
@@ -140,7 +146,9 @@ describe("FirefoxProfileAuth", () => {
 
     it("handles absolute paths in profiles.ini", () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         if (path.endsWith("/firefox") || path.endsWith("/.mozilla/firefox"))
           return true;
         if (path.endsWith("profiles.ini")) return true;
@@ -154,16 +162,20 @@ describe("FirefoxProfileAuth", () => {
       const auth = new FirefoxProfileAuth();
       expect(auth).toBeDefined();
 
-      // Database should have been opened with the absolute path
-      expect(MockedDatabase).toHaveBeenCalledWith(
-        expect.stringContaining("/opt/firefox-profiles/custom/cookies.sqlite"),
-        expect.any(Object)
+      // Database should have been opened with the absolute path. Compare on
+      // forward slashes: path.join emits backslashes on Windows.
+      expect(MockedDatabase).toHaveBeenCalledOnce();
+      const [dbPath] = vi.mocked(MockedDatabase).mock.calls[0]!;
+      expect(String(dbPath).replace(/\\/g, "/")).toContain(
+        "/opt/firefox-profiles/custom/cookies.sqlite"
       );
     });
 
     it("throws AuthError when profiles.ini is missing", () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         // Firefox root exists but profiles.ini does not
         if (path.endsWith("/firefox") || path.endsWith("/.mozilla/firefox"))
           return true;
@@ -178,7 +190,9 @@ describe("FirefoxProfileAuth", () => {
   describe("cookie reading", () => {
     it("throws AuthError when cookies.sqlite is missing", () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         if (path.endsWith("/firefox") || path.endsWith("/.mozilla/firefox"))
           return true;
         if (path.endsWith("profiles.ini")) return true;
@@ -197,7 +211,9 @@ describe("FirefoxProfileAuth", () => {
 
     it("throws AuthError when sessionKey cookie is not found", () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         if (path.endsWith("/firefox") || path.endsWith("/.mozilla/firefox"))
           return true;
         if (path.endsWith("profiles.ini")) return true;
@@ -216,7 +232,9 @@ describe("FirefoxProfileAuth", () => {
 
     it("queries only sessionKey cookie for claude.ai", () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         if (path.endsWith("/firefox") || path.endsWith("/.mozilla/firefox"))
           return true;
         if (path.endsWith("profiles.ini")) return true;
@@ -238,7 +256,9 @@ describe("FirefoxProfileAuth", () => {
   describe("database handling", () => {
     it("opens the database with immutable=1 URI flag and readonly mode", () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         if (path.endsWith("/firefox") || path.endsWith("/.mozilla/firefox"))
           return true;
         if (path.endsWith("profiles.ini")) return true;
@@ -259,7 +279,9 @@ describe("FirefoxProfileAuth", () => {
 
     it("closes the database connection after reading", () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         if (path.endsWith("/firefox") || path.endsWith("/.mozilla/firefox"))
           return true;
         if (path.endsWith("profiles.ini")) return true;
@@ -277,7 +299,9 @@ describe("FirefoxProfileAuth", () => {
 
     it("closes the database even when the cookie is not found", () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         if (path.endsWith("/firefox") || path.endsWith("/.mozilla/firefox"))
           return true;
         if (path.endsWith("profiles.ini")) return true;
@@ -301,7 +325,9 @@ describe("FirefoxProfileAuth", () => {
   describe("getHeaders()", () => {
     it("returns headers with sessionKey cookie and Chrome User-Agent", async () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         if (path.endsWith("cookies.sqlite")) return true;
         return false;
       });
@@ -322,7 +348,9 @@ describe("FirefoxProfileAuth", () => {
 
     it("caches the session key and does not re-read the database", async () => {
       mockedExistsSync.mockImplementation((p) => {
-        const path = String(p);
+        // Normalize to forward slashes: path.join emits backslashes on
+        // Windows, and these suffix matchers must hit on every platform.
+        const path = String(p).replace(/\\/g, "/");
         if (path.endsWith("cookies.sqlite")) return true;
         return false;
       });

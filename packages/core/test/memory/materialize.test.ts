@@ -39,7 +39,8 @@ describe("materializeProjectMemorySnapshot", () => {
     expect(readMemoryState(d)).toBeDefined();
   });
 
-  it("creates dir 0700 and writes files 0600", () => {
+  // POSIX mode bits are not representable on Windows (fs reports 0o666/0o777).
+  it.skipIf(process.platform === "win32")("creates dir 0700 and writes files 0600", () => {
     const d = mkdir();
     materializeProjectMemorySnapshot({
       ...base,
