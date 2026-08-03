@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-08-03
+
+### Fixed
+- **`irm | iex` bootstrap install crashed with "The property 'Path' cannot be found on this object."** Both `install.ps1` and `claudesync-setup.ps1` computed their script directory via `$MyInvocation.MyCommand.Path`; under `iex` there is no script file, `MyCommand` is a `ScriptBlock` with no `Path` property, and `Set-StrictMode -Version Latest` turns the bare read into a fatal error. The fallback now probes `PSObject.Properties['Path']` before reading. Caught by dogfooding the advertised one-liner install.
+- **CI's test job failed the mcp-server stdin-EOF regression test on every run since v0.11.2** (`expected 1 to be +0`). The test spawns a real server process, which resolves `@infinite-room-labs/claudesync-core` through package exports to `dist/` -- and the CI test job never built the workspace (the build job's output is not shared between jobs), so the child died at import with `ERR_MODULE_NOT_FOUND` and exit code 1. The test job now runs `pnpm build` before `pnpm test`, and the test captures the child's stderr so a crashing server produces a diagnosable failure instead of a bare exit code.
+- **Docker image publishes were not gated on tests.** `publish-docker.yml` pushed images straight from the tag; a red test suite could ship (and did, twice -- v0.11.2 and v0.11.3 published while CI was failing). The workflow now runs install/build/test as a prerequisite job, mirroring the gate `publish-npm.yml` already had.
+
+### Changed
+- **better-sqlite3 bumped `^11.0.0` -> `^12.0.0`.** v11 ships no prebuilt binaries for Node 24 (ABI 137), forcing a from-source compile that fails on Windows without Visual Studio and silently burns CI minutes on Linux; v12 ships Node 24 prebuilds for all platforms.
+- **pnpm is now pinned via the `packageManager` field** (`pnpm@9.15.9`), so corepack and `pnpm/action-setup` resolve the same version everywhere; the workflows' explicit `version: 9` inputs are removed in favor of the field (action-setup errors if both are present and disagree).
+- **Test suite now passes on Windows:** the Firefox cookie-auth tests' `existsSync`/DB-path mock matchers normalize backslashes before suffix-matching, and the two POSIX file-mode assertions (0o700/0o600) are skipped on win32 where mode bits are not representable.
+
 ## [0.11.3] - 2026-08-03
 
 ### Fixed
