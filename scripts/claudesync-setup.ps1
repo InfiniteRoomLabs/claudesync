@@ -340,26 +340,60 @@ function Uninstall-Mcp {
 }
 
 # Merge the claudesync MCP server entry into a client config file.
+# On PowerShell 6+ the file is parsed with -AsHashtable: ~/.claude.json can hold
+# keys differing only by case (e.g. project paths 'C:\x' and 'c:\x'), which the
+# case-insensitive PSObject conversion rejects outright. Depth 100 on the write
+# because ~/.claude.json nests far deeper than the old depth of 10, which
+# silently stringified everything below the cutoff.
 function Merge-McpServer {
     param([string]$FilePath)
     if ($DryRun) { Write-DryRun "add 'claudesync' MCP entry to $FilePath"; return }
-    $json = $null
-    if (Test-Path $FilePath) {
-        $c = Get-Content $FilePath -Raw -ErrorAction SilentlyContinue
+    $cfg = @{ command = $McpWrapperCmd; args = @() }
+    $c = $null
+    if (Test-Path $FilePath) { $c = Get-Content $FilePath -Raw -ErrorAction SilentlyContinue }
+    if ($PSVersionTable.PSVersion.Major -ge 6) {
+        $json = $null
+        if ($c) { $json = $c | ConvertFrom-Json -AsHashtable }
+        if (-not $json) { $json = [ordered]@{} }
+        if (-not $json.Contains('mcpServers') -or $null -eq $json['mcpServers']) {
+            $json['mcpServers'] = [ordered]@{}
+        }
+        $json['mcpServers']['claudesync'] = $cfg
+    }
+    else {
+        # Windows PowerShell 5.1 has no -AsHashtable; keep the PSObject path.
+        $json = $null
         if ($c) { $json = $c | ConvertFrom-Json }
+        if (-not $json) { $json = [PSCustomObject]@{} }
+        # Use the property indexer (strict-mode safe even when empty).
+        if (-not $json.PSObject.Properties['mcpServers']) {
+            $json | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([PSCustomObject]@{}) -Force
+        }
+        $json.mcpServers | Add-Member -NotePropertyName claudesync -NotePropertyValue ([PSCustomObject]$cfg) -Force
     }
-    if (-not $json) { $json = [PSCustomObject]@{} }
-    # Use the property indexer (strict-mode safe even when empty).
-    if (-not $json.PSObject.Properties['mcpServers']) {
-        $json | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([PSCustomObject]@{}) -Force
-    }
-    if ($json.mcpServers.PSObject.Properties['claudesync']) {
-        $json.mcpServers.PSObject.Properties.Remove('claudesync')
-    }
-    $cfg = [PSCustomObject]@{ command = $McpWrapperCmd; args = @() }
-    $json.mcpServers | Add-Member -NotePropertyName claudesync -NotePropertyValue $cfg -Force
-    $json | ConvertTo-Json -Depth 10 | Set-Content $FilePath -Encoding UTF8
+    $json | ConvertTo-Json -Depth 100 | Set-Content $FilePath -Encoding UTF8
     Write-Success "MCP server entry written to $FilePath"
+}
+
+# Register with Claude Code. Prefers 'claude mcp add' so Claude Code owns the
+# merge of its own state file -- rewriting all of ~/.claude.json from here is
+# the fallback, not the default. Remove-then-add because 'claude mcp add'
+# refuses to overwrite an existing entry.
+function Register-ClaudeCode {
+    $cli = Get-Command claude -ErrorAction SilentlyContinue
+    if ($cli) {
+        if ($DryRun) { Write-DryRun "claude mcp add --scope user claudesync -- $McpWrapperCmd"; return }
+        try {
+            & claude mcp remove --scope user claudesync 2>$null | Out-Null
+        } catch {}
+        & claude mcp add --scope user claudesync -- $McpWrapperCmd
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "MCP server registered via 'claude mcp add' (user scope)"
+            return
+        }
+        Write-Warn "'claude mcp add' failed (exit $LASTEXITCODE); falling back to editing ~/.claude.json directly."
+    }
+    Merge-McpServer (Join-Path $HOME ".claude.json")
 }
 
 # Write the MCP server entry to the selected client config (-Target or prompted).
@@ -380,7 +414,7 @@ function Configure-Mcp {
     }
     switch ($t) {
         "skip"           { Write-Info "Register manually with command: $McpWrapperCmd" }
-        "claude-code"    { Merge-McpServer (Join-Path $HOME ".claude.json") }
+        "claude-code"    { Register-ClaudeCode }
         "claude-desktop" {
             $f = Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
             Ensure-Dir (Split-Path $f -Parent); Merge-McpServer $f
