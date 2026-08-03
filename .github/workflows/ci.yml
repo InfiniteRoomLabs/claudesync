@@ -17,9 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm version comes from the packageManager field in package.json.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -42,9 +41,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm version comes from the packageManager field in package.json.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -68,9 +66,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm version comes from the packageManager field in package.json.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -94,9 +91,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm version comes from the packageManager field in package.json.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -109,5 +105,11 @@ jobs:
             node_modules
             packages/*/node_modules
           key: deps-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      # Subprocess tests (e.g. mcp-server stdin-eof) spawn real node processes
+      # that resolve workspace deps through package exports -> dist/, so the
+      # workspace must be built in THIS job -- the build job's output is not
+      # shared across jobs.
+      - run: pnpm build
 
       - run: pnpm test

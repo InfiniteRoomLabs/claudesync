@@ -17,13 +17,22 @@ describe("stdin EOF", () => {
     const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
       cwd: pkgRoot,
       env: { ...process.env, CLAUDE_AI_COOKIE: "sk-ant-test-dummy" },
-      stdio: ["pipe", "ignore", "ignore"],
+      // stderr is piped so a crashing child produces a diagnosable failure
+      // instead of a bare nonzero exit code (this hid an unbuilt-dist crash
+      // on CI for two releases).
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
     });
     child.stdin.end();
     const code = await new Promise<number | null>((resolve, reject) => {
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
-        reject(new Error("server did not exit within 10s of stdin EOF"));
+        reject(
+          new Error(`server did not exit within 10s of stdin EOF\nstderr:\n${stderr}`)
+        );
       }, 10_000);
       child.on("exit", (c) => {
         clearTimeout(timer);
@@ -31,6 +40,6 @@ describe("stdin EOF", () => {
       });
       child.on("error", reject);
     });
-    expect(code).toBe(0);
+    expect(code, `server exited ${code}, expected 0\nstderr:\n${stderr}`).toBe(0);
   }, 15_000);
 });
