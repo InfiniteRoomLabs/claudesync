@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-08-03
+
+### Fixed
+- **Windows installer crashed when configuring Claude Code as the MCP client.** Selecting "1) Claude Code" parsed the user's entire `~/.claude.json` with `ConvertFrom-Json`, which rejects JSON containing keys that differ only by case (project paths like `C:\x` and `c:\x` are recorded as-typed by Claude Code, so case-twins are normal on Windows) -- the install died with the `-AsHashTable` error before writing anything. The installer now prefers `claude mcp add --scope user` so Claude Code merges its own state file; the direct-edit fallback parses with `-AsHashtable` on PowerShell 6+ (Windows PowerShell 5.1 keeps the PSObject path). Also fixed in the fallback: the rewrite depth is raised from 10 to 100 -- `~/.claude.json` nests deeper than 10, and `ConvertTo-Json` silently stringifies everything below the cutoff, so every previously "successful" direct-edit run corrupted deep state. Caught by dogfooding the installer.
+
 ## [0.11.2] - 2026-07-23
 
 ### Fixed
