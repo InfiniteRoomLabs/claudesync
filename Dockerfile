@@ -15,7 +15,10 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 make g++ && \
     rm -rf /var/lib/apt/lists/*
 
-RUN corepack enable && corepack prepare pnpm@10.32.1 --activate
+# pnpm version comes from the packageManager field in package.json -- the
+# corepack shim reads it inside the project dir, so a prepare pin here would
+# be silently overridden anyway.
+RUN corepack enable
 
 WORKDIR /app
 
@@ -41,9 +44,10 @@ RUN pnpm --filter @infinite-room-labs/claudesync-core build && \
     pnpm --filter @infinite-room-labs/claudesync-cli build
 
 # Prune each target to production deps only
-# --legacy required for pnpm v10+ with non-injected workspace deps
-RUN pnpm --filter @infinite-room-labs/claudesync-mcp-server --prod deploy --legacy /app/pruned-mcp
-RUN pnpm --filter @infinite-room-labs/claudesync-cli --prod deploy --legacy /app/pruned-cli
+# pnpm 9 deploy copies non-injected workspace deps by default (the behavior
+# pnpm v10+ renamed to --legacy; that flag does not exist in 9).
+RUN pnpm --filter @infinite-room-labs/claudesync-mcp-server --prod deploy /app/pruned-mcp
+RUN pnpm --filter @infinite-room-labs/claudesync-cli --prod deploy /app/pruned-cli
 
 # ---- Target: mcp ----
 FROM node:24-slim AS mcp

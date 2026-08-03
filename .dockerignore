@@ -24,11 +24,13 @@ LICENSE
 .vscode/
 .idea/
 
-# Dependencies (rebuilt in container)
-node_modules/
+# Dependencies (rebuilt in container). **/ so nested package dirs match too --
+# a bare "node_modules/" only excludes the context root's copy, and local
+# builds were overlaying host node_modules onto the image's pnpm install.
+**/node_modules/
 
 # Build output (rebuilt in container)
-dist/
+**/dist/
 *.tsbuildinfo
 coverage/
 
