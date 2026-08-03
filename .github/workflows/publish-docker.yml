@@ -13,8 +13,29 @@ env:
   GHCR_IMAGE: ghcr.io/infiniteroomlabs/claudesync
 
 jobs:
+  # Release gate: images must never publish from a commit whose tests fail.
+  # (publish-npm.yml carries its own build+test gate; this mirrors it.)
+  test:
+    name: Test gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm version comes from the packageManager field in package.json.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+
   publish:
     name: Build & Push
+    needs: test
     runs-on: ubuntu-latest
     strategy:
       matrix:
