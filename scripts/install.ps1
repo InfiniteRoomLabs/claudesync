@@ -19,7 +19,9 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
 
 $ImageSync = "deathnerd/claudesync"
 $RawBase   = "https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main"
-$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { $null }
+# Probe for .Path before reading it: under 'irm | iex' MyCommand is a ScriptBlock
+# with no Path property, and strict mode makes the bare read a fatal error.
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.PSObject.Properties['Path'] -and $MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { $null }
 
 Write-Host ""
 Write-Host "  ClaudeSync -- your claude.ai data, your way" -ForegroundColor White

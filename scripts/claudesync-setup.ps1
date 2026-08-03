@@ -51,7 +51,9 @@ $McpWrapperPs1 = Join-Path $DataDir "claudesync-mcp.ps1"
 $McpWrapperCmd = Join-Path $DataDir "claudesync-mcp.cmd"
 $StateFile  = Join-Path $DataDir "setup-state.json"
 $Marker = "# claudesync -- installed by https://github.com/InfiniteRoomLabs/claudesync"
-$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { $null }
+# Probe for .Path before reading it: under 'irm | iex' MyCommand is a ScriptBlock
+# with no Path property, and strict mode makes the bare read a fatal error.
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.PSObject.Properties['Path'] -and $MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { $null }
 
 # Colored output helpers: info (cyan), success (green), warn (yellow), dry-run (yellow), fatal (red+exit).
 function Write-Info    { param([string]$m) Write-Host "[claudesync-setup] $m" -ForegroundColor Cyan }
