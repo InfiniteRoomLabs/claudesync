@@ -18,9 +18,11 @@ $RawBase   = "https://raw.githubusercontent.com/InfiniteRoomLabs/claudesync/main
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { $null }
 $LocalAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $HOME ".local/share" }
 
-$psExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
-if (-not $psExe) { $psExe = (Get-Command powershell -ErrorAction SilentlyContinue).Source }
-if (-not $psExe) { $psExe = "powershell" }
+# Strict-safe: Get-Command returns $null when absent, and $null.Source is fatal
+# under Set-StrictMode -- resolve the command first, read .Source only if found.
+$psCmd = Get-Command pwsh -ErrorAction SilentlyContinue
+if (-not $psCmd) { $psCmd = Get-Command powershell -ErrorAction SilentlyContinue }
+$psExe = if ($psCmd) { $psCmd.Source } else { "powershell" }
 
 # Prefer an already-installed manager.
 $installed = Join-Path $LocalAppData "claudesync\claudesync-setup.ps1"
@@ -37,11 +39,18 @@ else {
     $cleanup = $setup
     $got = $false
     if (Get-Command docker -ErrorAction SilentlyContinue) {
-        $cid = (docker create "${ImageSync}:latest" 2>$null | Select-Object -First 1)
-        if ($cid) {
-            try { docker cp "${cid}:/opt/claudesync/host/claudesync-setup.ps1" $setup 2>$null | Out-Null; if (Test-Path $setup) { $got = $true } }
-            finally { docker rm -f $cid 2>$null | Out-Null }
+        # PS 5.1 turns redirected native stderr into terminating errors under
+        # EAP=Stop, and docker chats on stderr even on success ("Unable to find
+        # image ... locally" before an auto-pull). Relax EAP around docker.
+        $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try {
+            $cid = (docker create "${ImageSync}:latest" 2>$null | Select-Object -First 1)
+            if ($cid) {
+                try { docker cp "${cid}:/opt/claudesync/host/claudesync-setup.ps1" $setup 2>$null | Out-Null; if (Test-Path $setup) { $got = $true } }
+                finally { docker rm -f $cid 2>$null | Out-Null }
+            }
         }
+        finally { $ErrorActionPreference = $eap }
     }
     if (-not $got) {
         try { Invoke-WebRequest -Uri "$RawBase/scripts/claudesync-setup.ps1" -OutFile $setup -UseBasicParsing; $got = $true } catch {}
