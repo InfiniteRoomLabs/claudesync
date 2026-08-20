@@ -50,9 +50,11 @@ else {
     if (-not $got) { Write-Host "install.ps1: could not obtain claudesync-setup.ps1" -ForegroundColor Red; exit 1 }
 }
 
-$psExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
-if (-not $psExe) { $psExe = (Get-Command powershell -ErrorAction SilentlyContinue).Source }
-if (-not $psExe) { $psExe = "powershell" }
+# Strict-safe: Get-Command returns $null when absent, and $null.Source is fatal
+# under Set-StrictMode -- resolve the command first, read .Source only if found.
+$psCmd = Get-Command pwsh -ErrorAction SilentlyContinue
+if (-not $psCmd) { $psCmd = Get-Command powershell -ErrorAction SilentlyContinue }
+$psExe = if ($psCmd) { $psCmd.Source } else { "powershell" }
 
 & $psExe -NoProfile -ExecutionPolicy Bypass -File $setup @Rest
 $rc = $LASTEXITCODE
