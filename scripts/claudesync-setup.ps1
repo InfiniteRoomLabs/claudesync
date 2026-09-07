@@ -39,6 +39,17 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 }
 
+# PS 5.1 (and pwsh <7.2) converts redirected native-command stderr into error
+# records; with $ErrorActionPreference='Stop' the first stderr line becomes a
+# terminating error. Docker chats on stderr even on success ("Unable to find
+# image ... locally" before an auto-pull), so run such commands via this helper,
+# which relaxes EAP for just the block (function-scoped, reverts on return).
+function Invoke-Native {
+    param([scriptblock]$Block)
+    $ErrorActionPreference = 'Continue'
+    & $Block
+}
+
 # --- constants ---
 $ImageSync = "deathnerd/claudesync"
 $ImageMcp  = "deathnerd/claudesync-mcp"
@@ -137,10 +148,10 @@ function Resolve-Ref {
     $ref = "${Image}:${tag}"
     if (-not $PinDigest) { return $ref }
     $digest = ""
-    try { $digest = (docker buildx imagetools inspect $ref --format '{{.Manifest.Digest}}' 2>$null) } catch {}
+    try { $digest = (Invoke-Native { docker buildx imagetools inspect $ref --format '{{.Manifest.Digest}}' 2>$null }) } catch {}
     if (-not $digest) {
         try {
-            $mj = docker manifest inspect -v $ref 2>$null | ConvertFrom-Json
+            $mj = Invoke-Native { docker manifest inspect -v $ref 2>$null } | ConvertFrom-Json
             $mj = if ($mj -is [array]) { $mj[0] } else { $mj }
             $digest = $mj.Descriptor.digest
         } catch {}
@@ -154,7 +165,7 @@ function Resolve-Ref {
 function Invoke-PullOrDetect {
     param([string]$Ref)
     if ($DryRun) { Write-DryRun "docker pull $Ref"; return $true }
-    $err = (docker pull $Ref 2>&1 | Out-String)
+    $err = (Invoke-Native { docker pull $Ref 2>&1 } | Out-String)
     if ($LASTEXITCODE -eq 0) { return $true }
     if ($err -match '(?i)@sha256|digest|content trust|DOCKER_CONTENT_TRUST') {
         if (-not $PinDigest) {
@@ -171,10 +182,10 @@ function Invoke-PullOrDetect {
 function Copy-FromImage {
     param([string]$ImageTag, [string]$ImagePath, [string]$Dest)
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
-    $cid = (docker create $ImageTag 2>$null | Select-Object -First 1)
+    $cid = (Invoke-Native { docker create $ImageTag 2>$null } | Select-Object -First 1)
     if (-not $cid) { return $false }
-    try { docker cp "${cid}:$ImagePath" $Dest 2>$null | Out-Null; return (Test-Path $Dest) }
-    finally { docker rm -f $cid 2>$null | Out-Null }
+    try { Invoke-Native { docker cp "${cid}:$ImagePath" $Dest 2>$null } | Out-Null; return (Test-Path $Dest) }
+    finally { Invoke-Native { docker rm -f $cid 2>$null } | Out-Null }
 }
 
 # Fetch a repo asset: local repo -> image -> GitHub (loud). Returns $true/$false.
@@ -254,7 +265,7 @@ function Install-Synchronizer {
     if (-not (Invoke-PullOrDetect $ref)) {
         $ref = Resolve-Ref $ImageSync $SynchronizerVersion
         Write-Info "Re-resolved to $ref"
-        if (-not $DryRun) { docker pull $ref 2>$null | Out-Null }
+        if (-not $DryRun) { Invoke-Native { docker pull $ref 2>$null } | Out-Null }
     }
 
     $profileDir = Split-Path $PROFILE -Parent
@@ -297,7 +308,7 @@ function Install-Mcp {
     if (-not (Invoke-PullOrDetect $ref)) {
         $ref = Resolve-Ref $ImageMcp $McpVersion
         Write-Info "Re-resolved to $ref"
-        if (-not $DryRun) { docker pull $ref 2>$null | Out-Null }
+        if (-not $DryRun) { Invoke-Native { docker pull $ref 2>$null } | Out-Null }
     }
     Ensure-Dir $DataDir
 
