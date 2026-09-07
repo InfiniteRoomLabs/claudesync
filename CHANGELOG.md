@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Dead Spec Kitty scaffolding (`.kittify/`, the CLAUDE.md section, ignore entries): untouched since the 2026-03 template init.
+
 ## [0.11.5] - 2026-08-03
 
 ### Fixed

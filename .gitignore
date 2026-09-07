@@ -11,7 +11,6 @@
 .roo/
 .amazonq/
 .github/copilot/
-.kittify/.dashboard
 
 # Dependencies
 node_modules/

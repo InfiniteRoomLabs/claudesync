@@ -20,7 +20,6 @@ LICENSE
 .roo/
 .amazonq/
 .github/
-.kittify/
 .vscode/
 .idea/
 
@@ -45,5 +44,3 @@ Thumbs.db
 *.swp
 *.swo
 
-# Spec Kitty artifacts
-kitty-specs/

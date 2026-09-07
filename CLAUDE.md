@@ -136,18 +136,9 @@ The tag build produces images tagged `X.Y.Z`, `X.Y`, `X`, `latest`, and the comm
 sha, on both ghcr.io and Docker Hub, with the host-side wrapper scripts baked into
 `/opt/claudesync/host/`. npm publishes via OIDC trusted publishing (no token).
 
-## Spec Kitty
-
-This repo uses Spec Kitty for structured development.
-
-### Workflow Phases
-`specify` -> `plan` -> `tasks` -> `implement` -> `review` -> `accept` -> `merge`
-
-Each phase has a corresponding `/spec-kitty.{phase}` command.
-
 ## Agent Marketplace
 
-This project uses the IRL private marketplace:
+This project uses the Infinite Room Labs Claude Code marketplace:
 ```
 /plugin install agency@infinite-room-labs
 ```
