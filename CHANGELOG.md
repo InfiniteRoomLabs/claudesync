@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows `claudesync-setup` hung forever in non-interactive sessions** (ssh without a tty, CI): the "Replace existing claudesync function in `$PROFILE`?" confirm called `Read-Host` unguarded and blocked on redirected stdin. It now declines with a "re-run with -Force" hint, matching `confirm()` in `claudesync-setup.sh`. The MCP-target prompt's `[Environment]::UserInteractive` guard (true under Windows sshd) also checks `[Console]::IsInputRedirected`.
+
 ### Removed
 
 - Dead Spec Kitty scaffolding (`.kittify/`, the CLAUDE.md section, ignore entries): untouched since the 2026-03 template init.

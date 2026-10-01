@@ -137,6 +137,12 @@ function Resolve-Args {
 function Confirm-Action {
     param([string]$Message)
     if ($Force -or $DryRun) { return $true }
+    # No console to answer from (ssh without a tty, CI): decline instead of
+    # blocking forever on Read-Host. Matches confirm() in claudesync-setup.sh.
+    if ([Console]::IsInputRedirected) {
+        Write-Warn "Non-interactive session; declining '$Message'. Re-run with -Force to accept."
+        return $false
+    }
     $r = Read-Host "[claudesync-setup] $Message [y/N]"
     return ($r -eq 'y' -or $r -eq 'Y')
 }
@@ -413,7 +419,7 @@ function Register-ClaudeCode {
 function Configure-Mcp {
     $t = $Target
     if (-not $t) {
-        if ([Environment]::UserInteractive -and -not $DryRun) {
+        if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not $DryRun) {
             Write-Host "`n  Configure ClaudeSync MCP for:" -ForegroundColor White
             Write-Host "    1) Claude Code  2) Claude Desktop  3) Project .mcp.json  4) Skip"
             switch (Read-Host "  Choice [1-4]") {
