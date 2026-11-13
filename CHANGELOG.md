@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Claude Duet support: a `claudesync duet` command suite and a `duet/` export tree.** Duet is Anthropic's proactive agent app (research preview). New subcommands read it (`duet status | channels | timeline | thread | tasks`), push into it (`duet send`, `duet task add | done | rename`), and export it (`duet sync`). `export-all` now also writes Duet chat and tasks to `<output>/duet/` by default; pass `--no-duet` to skip. A Duet failure, including an account with no Duet, is printed as a one-line note and never changes the export's exit code or stops the conversation export. The tree is one directory per channel per local day, each with a rendered `conversation.md` and a canonical `messages.json` that every sync upserts into, so history survives the API's 200-entry window. Core gains `DuetClient`, `runDuetSync`, `runDuetSyncGuarded`, and a public `ClaudeSyncClient.requestJson`. **This feature is built from a captured browser session and has not yet been verified against the live API.** The endpoints, headers and cookie-only auth are inferred; if a first run is rejected, the header set in `DUET_DEFAULT_HEADERS` is the first suspect. Design: `docs/superpowers/specs/2026-11-13-duet-design.md`.
+
 ### Removed
 
 - Dead Spec Kitty scaffolding (`.kittify/`, the CLAUDE.md section, ignore entries): untouched since the 2026-03 template init.

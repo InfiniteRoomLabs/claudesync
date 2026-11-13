@@ -114,6 +114,7 @@ COMMANDS
     projects [list]             list projects
     projects export <id>        export a project (knowledge + conversations)
     search <query>              full-text search
+    duet <subcommand>           Claude Duet chat and tasks (see "Claude Duet" below)
     tui                         interactive browser (Miller Columns)
 
 COMMON OPTIONS
@@ -166,6 +167,57 @@ claudesync search "typescript generics"
 claudesync projects
 claudesync ls --json --query "[?starred]"       # machine output, JMESPath-filtered
 ```
+
+### Claude Duet
+
+> **Unverified.** Duet support is built from a captured browser session and has
+> not yet been verified against the live API. Expect to adjust headers or fields
+> on a first run.
+
+Claude Duet is Anthropic's proactive agent app (research preview): a chat
+organised into channels, plus a task list. ClaudeSync can read it, hand it work
+from a shell, and export it next to your conversations.
+
+```
+claudesync duet status                          project: agent, channel, time zone, routines
+claudesync duet channels                        joined channels
+claudesync duet timeline [--channel <name|id>] [--limit N]
+claudesync duet thread <message-id> [--channel <name|id>]
+claudesync duet send <text> [--channel <name|id>] [--reply-to <message-id>]
+                                                use - as the text to read stdin
+claudesync duet tasks [--all] [--suggested]     open tasks; --all adds done and suggested
+claudesync duet task add <title>
+claudesync duet task done <id> [--undo]
+claudesync duet task rename <id> <title>
+claudesync duet sync [--output <path>]          write the duet/ tree below
+```
+
+`--channel` defaults to the Duet project's own channel. Every command takes
+`--org`, `--json` and `--query`. `export-all` runs the Duet sync by default;
+`--no-duet` skips it, and a Duet failure never changes its exit code.
+
+`duet sync` and `export-all` write this tree under the output directory. It is
+read-only against Duet and idempotent: each sync upserts into `messages.json`, so
+messages that have aged out of the API window are kept, and a day directory is
+rewritten only when its content changes. `INDEX.md` files from the indexer are
+always preserved.
+
+```
+duet/
+  duet.json                       project snapshot (no member lists)
+  tasks.json                      canonical task store
+  knowledge/TASKS.md              open, suggested and done tasks
+  conversations/<date>-<channel-slug>/
+    conversation.md               the day's log; replies nested under their root
+    messages.json                 canonical message store for that day and channel
+    README.md
+    .claudesync-state.json
+```
+
+The day is the local date of a thread's root message in the time zone from the
+Duet settings (UTC if unset or invalid). The API returns at most the newest 200
+timeline entries and no pagination cursor, so a first sync on a busier account
+gets only those.
 
 ### MCP server
 
