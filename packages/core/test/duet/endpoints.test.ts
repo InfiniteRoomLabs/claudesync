@@ -25,6 +25,9 @@ describe("DUET_ENDPOINTS", () => {
     expect(DUET_ENDPOINTS.tasks("chan_A")).toBe(
       "/v1/code/aibo/channels/chan_A/tasks?limit=200&include_adopted=true"
     );
+    expect(DUET_ENDPOINTS.taskCollection("chan_A")).toBe(
+      "/v1/code/aibo/channels/chan_A/tasks"
+    );
     expect(DUET_ENDPOINTS.task("chan_A", "t1")).toBe(
       "/v1/code/aibo/channels/chan_A/tasks/t1"
     );

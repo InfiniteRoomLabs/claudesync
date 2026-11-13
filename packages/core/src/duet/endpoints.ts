@@ -49,6 +49,13 @@ export const DUET_ENDPOINTS = {
   tasks: (channelId: string, limit = 200) =>
     `/v1/code/aibo/channels/${encodeURIComponent(channelId)}/tasks?limit=${limit}&include_adopted=true`,
   /**
+   * Task collection of a channel, without the list query string. Called with
+   * `POST` to create a task.
+   * @param channelId - Channel id (`chan_...`).
+   */
+  taskCollection: (channelId: string) =>
+    `/v1/code/aibo/channels/${encodeURIComponent(channelId)}/tasks`,
+  /**
    * One task. Called with `POST` to update it.
    * @param channelId - Channel id (`chan_...`).
    * @param taskId - Task id.
