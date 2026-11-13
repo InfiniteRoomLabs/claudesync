@@ -212,6 +212,33 @@ export class ClaudeSyncClient {
     return this.requestResponse(url);
   }
 
+  /**
+   * Issue a paced request with any method and body and return the parsed JSON.
+   *
+   * Public entry point for sibling clients that talk to claude.ai path families
+   * other than the `/api/organizations/...` surface this class wraps (for
+   * example the Duet client). It exposes the same choke point as every other
+   * method, {@link ClaudeSyncClient.requestResponse}, so limiter pacing, auth
+   * header injection, the case-insensitive header merge, 429 handling and
+   * non-2xx error mapping are shared rather than re-implemented.
+   *
+   * A successful response with an empty body (for example a 204) yields `null`
+   * instead of a JSON parse error.
+   *
+   * @param url - Absolute URL.
+   * @param init - Optional `fetch` init (method, body, headers, signal, ...).
+   * Defaults to a plain GET when omitted.
+   * @returns The decoded JSON value (still untyped; callers validate with Zod),
+   * or `null` for an empty body.
+   * @throws {@link RateLimitError} on HTTP 429.
+   * @throws {@link ClaudeSyncError} on any other non-2xx response.
+   */
+  async requestJson(url: string, init?: RequestInit): Promise<unknown> {
+    const response = await this.requestResponse(url, init);
+    const text = await response.text();
+    return text === "" ? null : JSON.parse(text);
+  }
+
   // --- Account ---
 
   /**
