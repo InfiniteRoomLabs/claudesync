@@ -9,6 +9,7 @@ import { searchCommand } from "./commands/search.js";
 import { exportAllCommand } from "./commands/export-all.js";
 import { claudeCodeCommand } from "./commands/claude-code.js";
 import { conversationsCommand } from "./commands/conversations.js";
+import { duetCommand } from "./commands/duet.js";
 
 /**
  * The package's own version, read from `package.json` at startup so
@@ -31,6 +32,7 @@ program.addCommand(searchCommand);
 program.addCommand(exportAllCommand);
 program.addCommand(claudeCodeCommand);
 program.addCommand(conversationsCommand);
+program.addCommand(duetCommand);
 
 // TUI subcommand
 program
