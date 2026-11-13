@@ -268,7 +268,8 @@ export const exportAllCommand = new Command("export-all")
           console.log(describeDuetOutcome(duetOutcome));
         }
 
-        if (aborted) {
+        // Re-read the signal: a Ctrl-C during the Duet phase counts too.
+        if (abortController.signal.aborted) {
           process.exitCode = 130; // 128 + SIGINT
         } else if (result.errors > 0) {
           process.exitCode = 1;

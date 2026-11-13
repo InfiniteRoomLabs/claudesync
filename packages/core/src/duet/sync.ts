@@ -19,14 +19,13 @@
 
 import path from "node:path";
 
+import { RateLimitError } from "../client/errors.js";
 import { writeTreeWithPreserve } from "../sync/tree.js";
-import type { SyncState } from "../sync/state.js";
 import type { DuetClient } from "./client.js";
+import { buildDayState, buildDayStore, countReplies, planDays } from "./days.js";
 import {
   channelSlug,
-  compareSeq,
-  dayDirName,
-  localDate,
+  dayTitle,
   normalizeTimeZone,
   renderDayLog,
   renderDayReadme,
@@ -34,6 +33,7 @@ import {
 } from "./render.js";
 import {
   CONVERSATION_FILENAME,
+  hasDayStore,
   loadDayStores,
   MESSAGES_FILENAME,
   readTaskStore,
@@ -41,13 +41,7 @@ import {
   toJsonText,
   writeFileIfChanged,
 } from "./store.js";
-import type {
-  DuetChannel,
-  DuetDayStore,
-  DuetMessage,
-  DuetProject,
-  DuetStoredTask,
-} from "./types.js";
+import type { DuetChannel, DuetMessage, DuetProject, DuetStoredTask } from "./types.js";
 
 /**
  * The slice of {@link DuetClient} that sync needs. Typing the sync against this
@@ -55,7 +49,7 @@ import type {
  */
 export type DuetSource = Pick<
   DuetClient,
-  "findProject" | "listChannels" | "getTimeline" | "getThread" | "listTasks"
+  "lookupProject" | "listChannels" | "getTimeline" | "getThread" | "listTasks"
 >;
 
 /** Options for {@link runDuetSync}. Only `outputRoot` is required. */
@@ -91,13 +85,31 @@ export type DuetProgressEvent =
     }
   /** Emitted once after the task list was synced. */
   | { type: "tasks-done"; tasks: number }
-  /** Emitted when one channel, thread or the task list failed. The run continues. */
-  | { type: "error"; scope: string; message: string };
+  /**
+   * Emitted when one channel, thread or the task list failed, or when the API
+   * returned malformed entries that were skipped. The run continues.
+   */
+  | {
+      type: "error";
+      /** What it concerns, such as `channel Home`, `thread <id> in Home` or `tasks`. */
+      scope: string;
+      /** The raw error text. It may span lines; flatten it to print it on one. */
+      message: string;
+    };
 
 /** Tally returned by {@link runDuetSync} once the run completes (or aborts). */
 export interface RunDuetSyncResult {
-  /** False when the account has no Duet; nothing was written in that case. */
+  /**
+   * False when there is nothing to sync: the project lookup was refused, or the
+   * project has no channel. Nothing was written in that case.
+   */
   available: boolean;
+  /**
+   * HTTP status (403 or 404) of a refused project lookup. Set only when
+   * `available` is false because of the refusal. The status cannot tell "no
+   * Duet on this account" from a rejected request, so callers should say both.
+   */
+  refusedStatus?: number;
   /** Channels planned for sync. */
   channels: number;
   /** Day directories written because their content changed. */
@@ -108,7 +120,12 @@ export interface RunDuetSyncResult {
   messages: number;
   /** Tasks the API returned. */
   tasks: number;
-  /** Channel, thread or task-list failures that were reported and skipped. */
+  /**
+   * Malformed messages and tasks the API returned that were skipped. Each list
+   * that had any is also reported as one `error` event.
+   */
+  invalid: number;
+  /** Failures and skipped malformed entries, each reported as an `error` event. */
   errors: number;
 }
 
@@ -119,9 +136,15 @@ export interface RunDuetSyncResult {
 export type RunDuetSyncOutcome =
   /** The sync ran; the tally may still contain per-channel `errors`. */
   | { status: "synced"; result: RunDuetSyncResult }
-  /** The account has no Duet. Not an error. */
+  /**
+   * Nothing to sync: no Duet on the account, or the project lookup was refused
+   * (`result.refusedStatus` then holds the HTTP status). Not an error.
+   */
   | { status: "unavailable"; result: RunDuetSyncResult }
-  /** The sync could not run at all. `message` is safe to print on one line. */
+  /**
+   * The sync could not run at all, or a rate limit ended it. `message` is the
+   * raw error text and may span lines; flatten it to print it on one.
+   */
   | { status: "failed"; message: string };
 
 /** Everything the per-channel and per-task helpers need, resolved once per run. */
@@ -152,7 +175,7 @@ interface SyncContext {
 const DEFAULT_LIMIT = 200;
 
 /**
- * Turn any thrown value into a one-line message.
+ * Turn any thrown value into its message text (which may span lines).
  *
  * @param err - The caught value.
  * @returns The error message, or the value stringified.
@@ -174,69 +197,17 @@ function fail(ctx: SyncContext, scope: string, err: unknown): void {
 }
 
 /**
- * Order messages by numeric `seq`, then by id so the order is total.
+ * Record list entries the client dropped as malformed: add them to the
+ * `invalid` tally and report them as one `error` event.
  *
- * @param a - First message.
- * @param b - Second message.
- * @returns A comparator result for `Array.prototype.sort`.
+ * @param ctx - The run context.
+ * @param scope - The list they came from, such as `channel Home` or `tasks`.
+ * @param count - The response's `invalidItems`; nothing happens when absent or 0.
  */
-function bySeqThenId(a: DuetMessage, b: DuetMessage): number {
-  return compareSeq(a.seq, b.seq) || a.id.localeCompare(b.id);
-}
-
-/**
- * Count, per thread root, how many replies are present in a message set.
- *
- * @param messages - Messages from the API and from earlier syncs.
- * @returns Map from root id to the number of non-root messages pointing at it.
- */
-function countReplies(messages: Iterable<DuetMessage>): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const m of messages) {
-    const rootId = m.thread_root_id ?? m.id;
-    if (rootId !== m.id) {
-      counts.set(rootId, (counts.get(rootId) ?? 0) + 1);
-    }
-  }
-  return counts;
-}
-
-/**
- * Build the `.claudesync-state.json` content for a day directory, so the
- * indexer's standard sidecar handling works on Duet days unchanged. The day is
- * modeled as a conversation whose leaf is its newest message.
- *
- * @param channel - The channel of the day.
- * @param store - The day's full store, messages sorted by `seq`.
- * @param name - Display name, matching the log's H1.
- * @param existed - Whether the day directory already existed.
- * @param now - Time of this sync.
- * @returns The sync state to persist.
- */
-function buildDayState(
-  channel: DuetChannel,
-  store: DuetDayStore,
-  name: string,
-  existed: boolean,
-  now: Date
-): SyncState {
-  const last = store.messages[store.messages.length - 1];
-  const newest = store.messages.reduce(
-    (max, m) => (m.created_at > max ? m.created_at : max),
-    store.messages[0]?.created_at ?? ""
-  );
-  return {
-    schema_version: 1,
-    conversation_uuid: `${channel.id}:${store.date}`,
-    conversation_name: name,
-    model: null,
-    updated_at: newest,
-    current_leaf_message_uuid: last?.id ?? null,
-    leaves: last ? [{ uuid: last.id, last_message_index: store.messages.length - 1 }] : [],
-    artifacts: [],
-    last_sync_at: now.toISOString(),
-    last_sync_action: existed ? "incremental" : "full",
-  };
+function noteInvalid(ctx: SyncContext, scope: string, count: number | undefined): void {
+  if (!count) return;
+  ctx.result.invalid += count;
+  fail(ctx, scope, `skipped ${count} malformed ${count === 1 ? "entry" : "entries"} the API returned`);
 }
 
 /**
@@ -245,39 +216,39 @@ function buildDayState(
  *
  * Thread completion fetches a thread when its root reports more replies than are
  * known (fetched now or stored earlier), or when a reply's root is unknown, so a
- * reply is filed under its root's day rather than its own. A failed thread fetch
- * is reported and skipped; the reply is then filed under its own day.
+ * new reply is filed under its root's day rather than its own. A failed thread
+ * fetch is reported and skipped; the reply is then filed under its own day, and
+ * stays there for good once stored (see {@link planDays}).
  *
  * @param duet - API source.
  * @param channel - The channel to sync.
  * @param ctx - The run context.
  * @returns Counts for the `channel-done` event.
- * @throws {@link Error} on a timeline failure or an unreadable stored day; the
- * caller reports it and moves to the next channel.
+ * @throws {@link RateLimitError} from a timeline or thread request, so the run
+ * ends instead of waiting out the shared limiter's pause.
+ * @throws {@link Error} on any other timeline failure or an unreadable stored
+ * day; the caller reports it and moves to the next channel.
  */
 async function syncChannel(
   duet: DuetSource,
   channel: DuetChannel,
   ctx: SyncContext
 ): Promise<{ written: number; unchanged: number; messages: number }> {
-  const slug = channelSlug(channel.name, channel.id);
   const channelName = channel.name || channel.id;
-  const stored = loadDayStores(ctx.conversationsDir, slug);
-
-  /** Every message stored by earlier syncs, by id. */
-  const index = new Map<string, DuetMessage>();
-  for (const day of stored.values()) {
-    for (const m of day.messages) index.set(m.id, m);
-  }
+  const stored = loadDayStores(ctx.conversationsDir, channel.id);
 
   /** Messages the API returned during this run, by id. */
   const fetched = new Map<string, DuetMessage>();
-  for (const m of (await duet.getTimeline(channel.id, { limit: ctx.limit })).data) {
-    fetched.set(m.id, m);
-  }
+  const timeline = await duet.getTimeline(channel.id, { limit: ctx.limit });
+  noteInvalid(ctx, `channel ${channelName}`, timeline.invalidItems);
+  for (const m of timeline.data) fetched.set(m.id, m);
 
   /** Stored plus fetched, fetched winning; used to find roots and reply counts. */
-  const known = new Map([...index, ...fetched]);
+  const known = new Map<string, DuetMessage>();
+  for (const day of stored.values()) {
+    for (const m of day.messages) known.set(m.id, m);
+  }
+  for (const m of fetched.values()) known.set(m.id, m);
   const replyCounts = countReplies(known.values());
   const threadsToFetch = new Set<string>();
   for (const m of fetched.values()) {
@@ -290,45 +261,48 @@ async function syncChannel(
   }
   for (const rootId of threadsToFetch) {
     if (ctx.signal?.aborted) break;
+    const scope = `thread ${rootId} in ${channelName}`;
     try {
-      for (const m of (await duet.getThread(channel.id, rootId, { limit: ctx.limit })).data) {
+      const thread = await duet.getThread(channel.id, rootId, { limit: ctx.limit });
+      noteInvalid(ctx, scope, thread.invalidItems);
+      for (const m of thread.data) {
         fetched.set(m.id, m);
         known.set(m.id, m);
       }
     } catch (err) {
-      fail(ctx, `thread ${rootId} in ${channelName}`, err);
+      if (err instanceof RateLimitError) throw err;
+      fail(ctx, scope, err);
     }
   }
 
-  /** Fetched messages grouped by the local date of their thread root. */
-  const byDate = new Map<string, DuetMessage[]>();
-  for (const m of fetched.values()) {
-    const root = known.get(m.thread_root_id ?? m.id) ?? m;
-    const date = localDate(root.created_at, ctx.timeZone);
-    byDate.set(date, [...(byDate.get(date) ?? []), m]);
-  }
-
+  const plans = planDays(
+    stored,
+    fetched.values(),
+    known,
+    channelSlug(channel.name, channel.id),
+    ctx.timeZone
+  );
   let written = 0;
   let unchanged = 0;
-  for (const date of [...byDate.keys()].sort()) {
-    const dirName = dayDirName(date, slug);
+  for (const dirName of [...plans.keys()].sort()) {
+    const plan = plans.get(dirName);
+    if (!plan) continue;
     const dir = path.join(ctx.conversationsDir, dirName);
-    const prior = stored.get(dirName);
-
-    const merged = new Map((prior?.messages ?? []).map((m) => [m.id, m]));
-    for (const m of byDate.get(date) ?? []) merged.set(m.id, m);
-    const store: DuetDayStore = {
-      channel_id: channel.id,
-      date,
-      time_zone: ctx.timeZone,
-      messages: [...merged.values()].sort(bySeqThenId),
-    };
-
+    if (!plan.prior && hasDayStore(dir)) {
+      // Another channel with the same name slug and id tail owns this name.
+      fail(
+        ctx,
+        `channel ${channelName}`,
+        `${dirName} already holds another channel's messages; not overwriting it`
+      );
+      continue;
+    }
+    const store = buildDayStore(channel.id, plan);
     const render = {
       agentName: ctx.agentName,
       channelName,
-      date,
-      timeZone: ctx.timeZone,
+      date: store.date,
+      timeZone: store.time_zone,
       messages: store.messages,
     };
     const messagesText = toJsonText(store);
@@ -344,18 +318,14 @@ async function syncChannel(
     await writeTreeWithPreserve(
       dir,
       {
+        // messages.json first: if a crash cuts the write short, the store lands
+        // before the files rendered from it.
         files: new Map([
-          [CONVERSATION_FILENAME, logText],
           [MESSAGES_FILENAME, messagesText],
+          [CONVERSATION_FILENAME, logText],
           ["README.md", renderDayReadme(render)],
         ]),
-        state: buildDayState(
-          channel,
-          store,
-          `${ctx.agentName} -- ${channelName} -- ${date}`,
-          prior !== undefined,
-          ctx.now()
-        ),
+        state: buildDayState(channel, store, dayTitle(render), plan.prior !== undefined, ctx.now()),
       },
       ctx.preserve
     );
@@ -368,13 +338,16 @@ async function syncChannel(
  * Sync the project channel's tasks into `tasks.json` and `knowledge/TASKS.md`.
  *
  * Every returned task is upserted with `present: true`; stored tasks the API no
- * longer returns are kept with `present: false`. Entries are written in id
- * order so the files are deterministic.
+ * longer returns are kept with `present: false`. An entry's `last_seen_at`
+ * moves only when the sync changes the entry (a new task, a new version of it,
+ * or a flip of `present`), so unchanged data rewrites nothing. Entries are
+ * written in id order so the files are deterministic, and are kept in a Map so
+ * an id such as `__proto__` is an ordinary key.
  *
  * @param duet - API source.
  * @param channelId - The project's own channel.
  * @param ctx - The run context.
- * @returns How many tasks the API returned.
+ * @returns How many tasks the API returned (malformed ones excluded).
  * @throws {@link Error} on a request failure or an unreadable `tasks.json`.
  */
 async function syncTasks(
@@ -383,32 +356,33 @@ async function syncTasks(
   ctx: SyncContext
 ): Promise<number> {
   const response = await duet.listTasks(channelId, { limit: ctx.limit });
+  noteInvalid(ctx, "tasks", response.invalidItems);
   const file = path.join(ctx.duetRoot, "tasks.json");
-  const prior = readTaskStore(file).tasks;
+  const prior = readTaskStore(file);
   const nowIso = ctx.now().toISOString();
 
-  const next: Record<string, DuetStoredTask> = {};
-  const returned = new Set<string>();
+  const next = new Map<string, DuetStoredTask>();
   for (const t of response.tasks) {
-    returned.add(t.id);
-    next[t.id] = {
+    const before = prior.get(t.id);
+    const same = before?.present === true && toJsonText(before.task) === toJsonText(t);
+    next.set(t.id, {
       task: t,
-      first_seen_at: prior[t.id]?.first_seen_at ?? nowIso,
-      last_seen_at: nowIso,
+      first_seen_at: before?.first_seen_at ?? nowIso,
+      last_seen_at: same && before ? before.last_seen_at : nowIso,
       present: true,
-    };
+    });
   }
-  for (const [id, entry] of Object.entries(prior)) {
-    if (!returned.has(id)) next[id] = { ...entry, present: false };
+  for (const [id, entry] of prior) {
+    if (!next.has(id)) {
+      next.set(id, entry.present ? { ...entry, last_seen_at: nowIso, present: false } : entry);
+    }
   }
-  const sorted = Object.fromEntries(
-    Object.entries(next).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-  );
+  const sorted = [...next].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 
-  writeFileIfChanged(file, toJsonText({ tasks: sorted }));
+  writeFileIfChanged(file, toJsonText({ tasks: Object.fromEntries(sorted) }));
   writeFileIfChanged(
     path.join(ctx.duetRoot, "knowledge", "TASKS.md"),
-    renderTasks(Object.values(sorted))
+    renderTasks(sorted.map(([, entry]) => entry))
   );
   return response.tasks.length;
 }
@@ -445,18 +419,23 @@ function buildProjectSnapshot(
  * Sync Claude Duet into the corpus. Read-only against Duet; never edits or
  * deletes anything there.
  *
- * Finds the project first. A missing project (404/403 from the API, or no
- * channel) means the account has no Duet, and the function returns
- * `available: false` having written nothing. Otherwise it snapshots the project,
- * syncs every joined channel (plus the project channel if the list omitted it),
- * then the task list. A failure in one channel, thread or the task list is
- * reported through `onProgress`, counted in `errors`, and does not stop the rest.
+ * Finds the project first. A refused lookup (404/403 from the API, whose
+ * status is kept in `refusedStatus`) or a project with no channel means there
+ * is nothing to sync, and the function returns `available: false` having
+ * written nothing. Otherwise it snapshots the project, syncs every joined
+ * channel (plus the project channel if the list omitted it), then the task
+ * list. A failure in one channel, thread or the task list is reported through
+ * `onProgress`, counted in `errors`, and does not stop the rest. A rate limit
+ * is the exception: it ends the run, because every later request would only
+ * wait out the shared limiter's pause.
  *
  * @param duet - API source, normally a {@link DuetClient}.
  * @param opts - Output root plus preserve, limit, abort, progress and clock options.
  * @returns The run tally (returned early, partially filled, if `opts.signal` aborts).
- * @throws {@link Error} when the project lookup itself fails or the output
- * cannot be written. Use {@link runDuetSyncGuarded} to turn that into a value.
+ * @throws {@link RateLimitError} when a timeline or thread request is rate limited.
+ * @throws {@link Error} when the project lookup itself fails (including the
+ * server creating a project on a find-only request) or the output cannot be
+ * written. Use {@link runDuetSyncGuarded} to turn any of these into a value.
  */
 export async function runDuetSync(
   duet: DuetSource,
@@ -469,12 +448,18 @@ export async function runDuetSync(
     daysUnchanged: 0,
     messages: 0,
     tasks: 0,
+    invalid: 0,
     errors: 0,
   };
 
-  const project = await duet.findProject();
-  const projectChannel = project?.channel;
-  if (!project || !projectChannel?.id) {
+  const lookup = await duet.lookupProject();
+  if (lookup.project === null) {
+    result.refusedStatus = lookup.status;
+    return result;
+  }
+  const project = lookup.project;
+  const projectChannel = project.channel;
+  if (!projectChannel?.id) {
     return result;
   }
   result.available = true;
@@ -514,6 +499,7 @@ export async function runDuetSync(
       result.messages += done.messages;
       ctx.onProgress({ type: "channel-done", channel: channel.name || channel.id, ...done });
     } catch (err) {
+      if (err instanceof RateLimitError) throw err;
       fail(ctx, `channel ${channel.name || channel.id}`, err);
     }
   }
@@ -537,8 +523,8 @@ export async function runDuetSync(
  *
  * @param duet - API source, normally a {@link DuetClient}.
  * @param opts - Options forwarded to {@link runDuetSync}.
- * @returns `synced`, `unavailable` (no Duet on the account), or `failed` with a
- * one-line message.
+ * @returns `synced`, `unavailable` (no Duet on the account, or a refused
+ * lookup), or `failed` with the error's message.
  */
 export async function runDuetSyncGuarded(
   duet: DuetSource,

@@ -68,8 +68,12 @@ export const DuetMessageSchema = z
     thread_root_id: z.string().nullable().optional(),
     /** Creation time, ISO 8601 with a `Z` suffix. */
     created_at: z.string(),
-    /** Message body, markdown. Written verbatim into the export. */
-    body: z.string(),
+    /**
+     * Message body, markdown. Null or missing renders as an empty body rather
+     * than rejecting the message. Written into the export with heading lines
+     * escaped; see `renderDayLog`.
+     */
+    body: z.string().nullable().optional(),
     /** Number of replies the server holds for this message. */
     reply_count: z.number().nullable().optional(),
     /** Set when a person wrote the message. */
@@ -122,8 +126,10 @@ export const DuetSendResponseSchema = z
   .passthrough();
 
 /**
- * The `found` block of a task the agent surfaced from a connector. Every
- * field is optional because only its presence is read.
+ * The `found` block of a task the agent surfaced from a connector. Its presence
+ * marks a suggestion; `why`, `connector` and `summary` are rendered into
+ * `TASKS.md` and the CLI. Every field is optional because the shape comes from
+ * a capture and may drift.
  */
 export const DuetTaskFoundSchema = z
   .object({
@@ -226,7 +232,12 @@ export const DuetStoredTaskSchema = z
     task: DuetTaskSchema,
     /** Time of the first sync that saw the task (ISO 8601). */
     first_seen_at: z.string(),
-    /** Time of the latest sync that saw the task (ISO 8601). */
+    /**
+     * Time of the last sync that recorded a change to this entry (ISO 8601): the
+     * first sighting, a new version of `task`, or a flip of `present`. A sync
+     * that changes neither leaves it alone, so `tasks.json` stays byte-identical
+     * across syncs of unchanged data.
+     */
     last_seen_at: z.string(),
     /** False once a sync no longer returns the task. The entry is kept. */
     present: z.boolean(),

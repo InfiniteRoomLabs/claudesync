@@ -22,20 +22,62 @@ export type DuetChannel = z.infer<typeof DuetChannelSchema>;
 export type DuetSettings = z.infer<typeof DuetSettingsSchema>;
 /** The Duet project. Inferred from {@link DuetProjectSchema}. */
 export type DuetProject = z.infer<typeof DuetProjectSchema>;
+
+/**
+ * Result of `DuetClient.lookupProject`: the project, or the HTTP status of the
+ * refusal. A refusal is either "no Duet on this account" or a rejected request
+ * (a header the server enforces, say); the status cannot tell them apart, so it
+ * is carried for the caller to report.
+ */
+export type DuetProjectLookup =
+  /** The server answered with a project. */
+  | {
+      /** The project the server answered with. */
+      project: DuetProject;
+      /** Not set when the server answered. */
+      status?: never;
+    }
+  /** The server refused the lookup with 403 or 404. */
+  | {
+      /** No project: the server refused the lookup. */
+      project: null;
+      /** HTTP status of the refusal, 403 or 404. */
+      status: number;
+    };
 /** A chat message. Inferred from {@link DuetMessageSchema}. */
 export type DuetMessage = z.infer<typeof DuetMessageSchema>;
 /** Channel list response. Inferred from {@link DuetChannelsResponseSchema}. */
 export type DuetChannelsResponse = z.infer<typeof DuetChannelsResponseSchema>;
-/** Timeline or thread response. Inferred from {@link DuetTimelineResponseSchema}. */
-export type DuetTimelineResponse = z.infer<typeof DuetTimelineResponseSchema>;
+
+/**
+ * What `DuetClient` adds to a list response after validating it entry by entry.
+ * One malformed entry is dropped and counted instead of failing the whole list.
+ */
+export interface DuetListValidation {
+  /**
+   * Entries the server returned that failed validation and were dropped. Set by
+   * the client, never by the server, and absent when every entry was valid.
+   */
+  invalidItems?: number;
+}
+
+/**
+ * Timeline or thread response. Inferred from {@link DuetTimelineResponseSchema},
+ * plus the client's {@link DuetListValidation} count.
+ */
+export type DuetTimelineResponse = z.infer<typeof DuetTimelineResponseSchema> &
+  DuetListValidation;
 /** Send-message response. Inferred from {@link DuetSendResponseSchema}. */
 export type DuetSendResponse = z.infer<typeof DuetSendResponseSchema>;
 /** A task payload. Inferred from {@link DuetTaskDataSchema}. */
 export type DuetTaskData = z.infer<typeof DuetTaskDataSchema>;
 /** A task. Inferred from {@link DuetTaskSchema}. */
 export type DuetTask = z.infer<typeof DuetTaskSchema>;
-/** List-tasks response. Inferred from {@link DuetTasksResponseSchema}. */
-export type DuetTasksResponse = z.infer<typeof DuetTasksResponseSchema>;
+/**
+ * List-tasks response. Inferred from {@link DuetTasksResponseSchema}, plus the
+ * client's {@link DuetListValidation} count.
+ */
+export type DuetTasksResponse = z.infer<typeof DuetTasksResponseSchema> & DuetListValidation;
 /** Create or update task response. Inferred from {@link DuetTaskWriteResponseSchema}. */
 export type DuetTaskWriteResponse = z.infer<typeof DuetTaskWriteResponseSchema>;
 

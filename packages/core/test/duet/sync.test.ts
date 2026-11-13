@@ -2,7 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AuthProvider } from "@core/auth/types.js";
+import { ClaudeSyncClient } from "@core/client/client.js";
 import { ClaudeSyncError, RateLimitError } from "@core/client/errors.js";
+import { DuetClient } from "@core/duet/client.js";
 import {
   runDuetSync,
   runDuetSyncGuarded,
@@ -62,7 +65,10 @@ function task(id: string, data: Record<string, unknown> = {}): DuetTask {
 
 /** Knobs for {@link makeSource}. */
 interface SourceSpec {
+  /** The project; `null` means the lookup was refused with {@link refusedStatus}. */
   project?: DuetProject | null;
+  /** HTTP status of a refused lookup when `project` is null. Default 404. */
+  refusedStatus?: number;
   channels?: DuetChannel[];
   timelines?: Record<string, DuetMessage[] | Error>;
   threads?: Record<string, DuetMessage[] | Error>;
@@ -71,6 +77,7 @@ interface SourceSpec {
 
 /** Fake {@link DuetSource} whose methods are spies, so tests can count calls. */
 function makeSource(spec: SourceSpec = {}): DuetSource & {
+  lookupProject: ReturnType<typeof vi.fn>;
   getTimeline: ReturnType<typeof vi.fn>;
   getThread: ReturnType<typeof vi.fn>;
   listTasks: ReturnType<typeof vi.fn>;
@@ -86,7 +93,9 @@ function makeSource(spec: SourceSpec = {}): DuetSource & {
   const answer = <T,>(v: T | Error | undefined, fallback: T): Promise<T> =>
     v instanceof Error ? Promise.reject(v) : Promise.resolve(v ?? fallback);
   return {
-    findProject: vi.fn(async () => project),
+    lookupProject: vi.fn(async () =>
+      project ? { project } : { project: null, status: spec.refusedStatus ?? 404 }
+    ),
     listChannels: vi.fn(async () => spec.channels ?? [{ id: CHAN, name: "Home" }]),
     getTimeline: vi.fn(async (channelId: string) => ({
       data: await answer(spec.timelines?.[channelId], [] as DuetMessage[]),
@@ -107,6 +116,34 @@ const readJson = (...parts: string[]) =>
 
 /** Fixed clock factory so the sidecar timestamp is predictable. */
 const clock = (iso: string) => () => new Date(iso);
+
+/** Read a day's `conversation.md`. */
+const readLog = (dir: string) =>
+  fs.readFileSync(duetPath("conversations", dir, "conversation.md"), "utf-8");
+
+/** Message ids stored in a day's `messages.json`, in file order. */
+const storedIds = (dir: string) =>
+  (readJson("conversations", dir, "messages.json") as { messages: DuetMessage[] }).messages.map(
+    (m) => m.id
+  );
+
+/** Every day directory of the tree, sorted, without crash stashes. */
+const dayDirs = () =>
+  fs
+    .readdirSync(duetPath("conversations"))
+    .filter((d) => !d.endsWith(".prev"))
+    .sort();
+
+/** How many day directories hold a message id. A synced id must be in exactly one. */
+const copiesOf = (id: string) => dayDirs().filter((d) => storedIds(d).includes(id)).length;
+
+/** Mock {@link AuthProvider} for the tests that drive a real {@link DuetClient}. */
+function createMockAuth(): AuthProvider {
+  return {
+    getHeaders: async () => ({ Cookie: "test-cookie", "User-Agent": "test-agent" }),
+    getOrganizationId: async () => "org-123",
+  };
+}
 
 describe("runDuetSync", () => {
   it("no-Duet account writes nothing", async () => {
@@ -218,7 +255,8 @@ describe("runDuetSync", () => {
 
     expect(fs.readdirSync(duetPath("conversations"))).toEqual([day("2026-11-02")]);
     const log = fs.readFileSync(duetPath("conversations", day("2026-11-02"), "conversation.md"), "utf-8");
-    expect(log).toContain("### 09:00 You");
+    // The reply's own date differs from the day's, so its heading carries it.
+    expect(log).toContain("### 2026-11-04 09:00 You");
     expect(source.getThread).not.toHaveBeenCalled();
   });
 
@@ -273,17 +311,36 @@ describe("runDuetSync", () => {
 
   it("a second run rewrites nothing", async () => {
     const spec: SourceSpec = {
-      timelines: { [CHAN]: [msg("cmsg_1", 1, "2026-11-02T15:00:00Z")] },
-      tasks: [task("t1")],
+      channels: [
+        { id: CHAN, name: "Home" },
+        { id: CHAN2, name: "Work" },
+      ],
+      timelines: {
+        [CHAN]: [
+          msg("cmsg_1", 1, "2026-11-02T15:00:00Z"),
+          msg("cmsg_2", 2, "2026-11-03T15:00:00Z"),
+        ],
+        [CHAN2]: [msg("cmsg_w", 1, "2026-11-02T10:00:00Z", { channel_id: CHAN2 })],
+      },
+      tasks: [task("t1"), task("t2", { done: true })],
     };
     await runDuetSync(makeSource(spec), { outputRoot: root, now: clock("2026-11-13T00:00:00Z") });
 
     const dir = duetPath("conversations", day("2026-11-02"));
+    /** Text and mtime of a file, so both bytes and "was it touched" are checked. */
+    const snap = (file: string) => ({
+      text: fs.readFileSync(file, "utf-8"),
+      mtime: fs.statSync(file).mtimeMs,
+    });
+    const messageFiles = dayDirs().map((d) => duetPath("conversations", d, "messages.json"));
+    expect(messageFiles).toHaveLength(3);
     const before = {
       mtime: fs.statSync(path.join(dir, "conversation.md")).mtimeMs,
       state: fs.readFileSync(path.join(dir, ".claudesync-state.json"), "utf-8"),
       tasksMd: fs.statSync(duetPath("knowledge", "TASKS.md")).mtimeMs,
       duetJson: fs.statSync(duetPath("duet.json")).mtimeMs,
+      tasksJson: snap(duetPath("tasks.json")),
+      messages: messageFiles.map(snap),
     };
 
     const second = await runDuetSync(makeSource(spec), {
@@ -292,12 +349,35 @@ describe("runDuetSync", () => {
     });
 
     expect(second.daysWritten).toBe(0);
-    expect(second.daysUnchanged).toBe(1);
+    expect(second.daysUnchanged).toBe(3);
     expect(fs.statSync(path.join(dir, "conversation.md")).mtimeMs).toBe(before.mtime);
     // A rewrite would have stamped the new clock into the sidecar.
     expect(fs.readFileSync(path.join(dir, ".claudesync-state.json"), "utf-8")).toBe(before.state);
     expect(fs.statSync(duetPath("knowledge", "TASKS.md")).mtimeMs).toBe(before.tasksMd);
     expect(fs.statSync(duetPath("duet.json")).mtimeMs).toBe(before.duetJson);
+    // tasks.json and every messages.json are byte-identical and untouched.
+    expect(snap(duetPath("tasks.json"))).toEqual(before.tasksJson);
+    expect(messageFiles.map(snap)).toEqual(before.messages);
+  });
+
+  it("tasks.json stamps last_seen_at only when an entry changes", async () => {
+    await runDuetSync(makeSource({ tasks: [task("t1"), task("t2")] }), {
+      outputRoot: root,
+      now: clock("2026-11-13T00:00:00Z"),
+    });
+    await runDuetSync(makeSource({ tasks: [task("t1"), task("t2", { title: "Renamed" })] }), {
+      outputRoot: root,
+      now: clock("2026-11-14T00:00:00Z"),
+    });
+
+    const store = readJson("tasks.json") as {
+      tasks: Record<string, { first_seen_at: string; last_seen_at: string }>;
+    };
+    expect(store.tasks.t1.last_seen_at).toBe("2026-11-13T00:00:00.000Z");
+    expect(store.tasks.t2).toMatchObject({
+      first_seen_at: "2026-11-13T00:00:00.000Z",
+      last_seen_at: "2026-11-14T00:00:00.000Z",
+    });
   });
 
   it("INDEX.md survives a day rewrite", async () => {
@@ -386,7 +466,7 @@ describe("runDuetSync", () => {
     expect(source.getThread).toHaveBeenCalledTimes(1);
     expect(fs.readdirSync(duetPath("conversations"))).toEqual([day("2026-11-01")]);
     const log = fs.readFileSync(duetPath("conversations", day("2026-11-01"), "conversation.md"), "utf-8");
-    expect(log).toContain("### 09:00 You");
+    expect(log).toContain("### 2026-11-04 09:00 You");
   });
 
   it("still stores an orphaned reply when its thread cannot be fetched", async () => {
@@ -417,14 +497,16 @@ describe("runDuetSync", () => {
     const store = readJson("tasks.json") as {
       tasks: Record<string, { present: boolean; first_seen_at: string; last_seen_at: string }>;
     };
+    // t1 did not change, so its entry keeps the stamp of the sync that wrote it.
     expect(store.tasks.t1).toMatchObject({
       present: true,
       first_seen_at: "2026-11-13T00:00:00.000Z",
-      last_seen_at: "2026-11-14T00:00:00.000Z",
+      last_seen_at: "2026-11-13T00:00:00.000Z",
     });
+    // t2 dropping out is a change to its entry, recorded by the second sync.
     expect(store.tasks.t2).toMatchObject({
       present: false,
-      last_seen_at: "2026-11-13T00:00:00.000Z",
+      last_seen_at: "2026-11-14T00:00:00.000Z",
     });
     expect(fs.readFileSync(duetPath("knowledge", "TASKS.md"), "utf-8")).toContain(
       "Task t2 _(not in the latest sync)_"
@@ -527,12 +609,291 @@ describe("runDuetSync", () => {
     await runDuetSync(makeSource(spec), { outputRoot: root, preserve: ["notes/**"] });
     expect(fs.readFileSync(path.join(dir, "notes", "mine.md"), "utf-8")).toBe("keep me");
   });
+
+  it("a rate limit on a channel ends the run instead of moving on", async () => {
+    const source = makeSource({
+      channels: [
+        { id: CHAN, name: "Home" },
+        { id: CHAN2, name: "Work" },
+      ],
+      timelines: {
+        [CHAN]: new RateLimitError(Math.floor(Date.now() / 1000) + 60),
+        [CHAN2]: [msg("cmsg_w", 1, "2026-11-02T10:00:00Z", { channel_id: CHAN2 })],
+      },
+    });
+    await expect(runDuetSync(source, { outputRoot: root })).rejects.toBeInstanceOf(RateLimitError);
+    expect(source.getTimeline).toHaveBeenCalledTimes(1);
+    expect(source.listTasks).not.toHaveBeenCalled();
+  });
+
+  it("a rate limit on a thread ends the run instead of moving on", async () => {
+    const source = makeSource({
+      channels: [
+        { id: CHAN, name: "Home" },
+        { id: CHAN2, name: "Work" },
+      ],
+      timelines: {
+        [CHAN]: [msg("cmsg_r1", 5, "2026-11-04T09:00:00Z", { thread_root_id: "cmsg_old_root" })],
+        [CHAN2]: [msg("cmsg_w", 1, "2026-11-02T10:00:00Z", { channel_id: CHAN2 })],
+      },
+      threads: { cmsg_old_root: new RateLimitError(Math.floor(Date.now() / 1000) + 60) },
+    });
+    const outcome = await runDuetSyncGuarded(source, { outputRoot: root });
+    expect(outcome.status).toBe("failed");
+    expect(source.getTimeline).toHaveBeenCalledTimes(1);
+    expect(source.listTasks).not.toHaveBeenCalled();
+  });
+
+  it("skips malformed entries, counts them and reports them", async () => {
+    const events: DuetProgressEvent[] = [];
+    const source = makeSource({ tasks: [task("t1")] });
+    source.getTimeline = vi.fn(async () => ({
+      data: [msg("cmsg_1", 1, "2026-11-02T15:00:00Z")],
+      invalidItems: 2,
+    }));
+    source.listTasks = vi.fn(async () => ({ tasks: [task("t1")], invalidItems: 1 }));
+
+    const result = await runDuetSync(source, { outputRoot: root, onProgress: (e) => events.push(e) });
+
+    expect(result).toMatchObject({ invalid: 3, errors: 2, daysWritten: 1, tasks: 1 });
+    const errors = events.filter((e) => e.type === "error");
+    expect(errors.map((e) => e.type === "error" && e.scope)).toEqual(["channel Home", "tasks"]);
+    expect(errors[0].type === "error" && errors[0].message).toMatch(/2 malformed/);
+    expect(storedIds(day("2026-11-02"))).toEqual(["cmsg_1"]);
+  });
+
+  it("stores a message with a null body and renders it as empty", async () => {
+    await runDuetSync(
+      makeSource({
+        timelines: { [CHAN]: [msg("cmsg_1", 1, "2026-11-02T15:00:00Z", { body: null })] },
+      }),
+      { outputRoot: root }
+    );
+    expect(storedIds(day("2026-11-02"))).toEqual(["cmsg_1"]);
+    expect(readLog(day("2026-11-02"))).toBe("# Duet -- Home -- 2026-11-02\n\n## 15:00 You\n\n\n");
+  });
+
+  it("reports the status of a refused project lookup", async () => {
+    const result = await runDuetSync(makeSource({ project: null, refusedStatus: 403 }), {
+      outputRoot: root,
+    });
+    expect(result).toMatchObject({ available: false, refusedStatus: 403 });
+    expect(fs.existsSync(duetPath())).toBe(false);
+  });
+
+  it("keeps a task whose id is __proto__ across runs", async () => {
+    const spec: SourceSpec = { tasks: [task("t1"), task("__proto__")] };
+    await runDuetSync(makeSource(spec), { outputRoot: root, now: clock("2026-11-13T00:00:00Z") });
+    const first = fs.readFileSync(duetPath("tasks.json"), "utf-8");
+    expect(Object.keys((JSON.parse(first) as { tasks: object }).tasks)).toEqual(["__proto__", "t1"]);
+
+    await runDuetSync(makeSource(spec), { outputRoot: root, now: clock("2026-11-14T00:00:00Z") });
+    expect(fs.readFileSync(duetPath("tasks.json"), "utf-8")).toBe(first);
+    expect(fs.readFileSync(duetPath("knowledge", "TASKS.md"), "utf-8")).toContain("Task __proto__");
+  });
+
+  describe("a message id lives in exactly one day, forever", () => {
+    it("a late reply in a later run lands in its stored root's day", async () => {
+      await runDuetSync(
+        makeSource({ timelines: { [CHAN]: [msg("cmsg_root", 1, "2026-11-02T09:00:00Z")] } }),
+        { outputRoot: root }
+      );
+      // The root has left the window; only its reply comes back.
+      const source = makeSource({
+        timelines: {
+          [CHAN]: [msg("cmsg_reply", 9, "2026-11-04T09:00:00Z", { thread_root_id: "cmsg_root" })],
+        },
+      });
+      await runDuetSync(source, { outputRoot: root });
+
+      expect(dayDirs()).toEqual([day("2026-11-02")]);
+      expect(storedIds(day("2026-11-02"))).toEqual(["cmsg_root", "cmsg_reply"]);
+      expect(source.getThread).not.toHaveBeenCalled();
+    });
+
+    it("a reply filed under its own day stays there when its root resolves later", async () => {
+      const rootMsg = msg("cmsg_root", 1, "2026-11-01T09:00:00Z", { reply_count: 1 });
+      const reply = msg("cmsg_rep", 5, "2026-11-04T09:00:00Z", { thread_root_id: "cmsg_root" });
+      // Run 1: the thread fetch fails, so the reply is filed under its own day.
+      await runDuetSync(
+        makeSource({
+          timelines: { [CHAN]: [reply] },
+          threads: { cmsg_root: new ClaudeSyncError("boom", 500) },
+        }),
+        { outputRoot: root }
+      );
+      expect(dayDirs()).toEqual([day("2026-11-04")]);
+
+      // Run 2: the thread fetch succeeds. History never moves.
+      await runDuetSync(
+        makeSource({ timelines: { [CHAN]: [reply] }, threads: { cmsg_root: [rootMsg, reply] } }),
+        { outputRoot: root }
+      );
+      expect(dayDirs()).toEqual([day("2026-11-01"), day("2026-11-04")]);
+      expect(copiesOf("cmsg_rep")).toBe(1);
+      expect(storedIds(day("2026-11-04"))).toEqual(["cmsg_rep"]);
+      expect(storedIds(day("2026-11-01"))).toEqual(["cmsg_root"]);
+
+      // Run 3: the root is stored now, so nothing is fetched or moved again.
+      const third = makeSource({ timelines: { [CHAN]: [reply] } });
+      const result = await runDuetSync(third, { outputRoot: root });
+      expect(third.getThread).not.toHaveBeenCalled();
+      expect(result.daysWritten).toBe(0);
+      expect(copiesOf("cmsg_rep")).toBe(1);
+    });
+
+    it("a channel rename keeps writing existing dates to their directories", async () => {
+      const x = msg("cmsg_x", 1, "2026-11-02T09:00:00Z");
+      await runDuetSync(makeSource({ timelines: { [CHAN]: [x] } }), { outputRoot: root });
+
+      const renamed = { id: CHAN, name: "House" };
+      await runDuetSync(
+        makeSource({
+          project: { channel: renamed, settings: { agent_name: "Duet", time_zone: "UTC" } },
+          channels: [renamed],
+          timelines: {
+            [CHAN]: [
+              x,
+              msg("cmsg_y", 2, "2026-11-02T10:00:00Z"),
+              msg("cmsg_z", 3, "2026-11-03T10:00:00Z"),
+            ],
+          },
+        }),
+        { outputRoot: root }
+      );
+
+      // The existing date did not fork; only the new date uses the new slug.
+      expect(dayDirs()).toEqual([day("2026-11-02"), day("2026-11-03", "house-000000")]);
+      expect(storedIds(day("2026-11-02"))).toEqual(["cmsg_x", "cmsg_y"]);
+      expect(copiesOf("cmsg_x")).toBe(1);
+      expect(readLog(day("2026-11-02"))).toContain("# Duet -- House -- 2026-11-02");
+    });
+
+    it("a time-zone change does not file a stored message under a second day", async () => {
+      // 02:30 UTC on the 3rd: the 3rd in UTC, the 2nd (20:30) in Chicago.
+      const early = msg("cmsg_m", 1, "2026-11-03T02:30:00Z");
+      await runDuetSync(makeSource({ timelines: { [CHAN]: [early] } }), { outputRoot: root });
+      expect(dayDirs()).toEqual([day("2026-11-03")]);
+
+      await runDuetSync(
+        makeSource({
+          project: {
+            channel: { id: CHAN, name: "Home" },
+            settings: { agent_name: "Duet", time_zone: "America/Chicago" },
+          },
+          timelines: {
+            [CHAN]: [
+              early,
+              // A new reply to the stored root follows the root, not the new zone.
+              msg("cmsg_reply", 2, "2026-11-03T04:00:00Z", { thread_root_id: "cmsg_m" }),
+              // A new root is bucketed in the new zone: 21:00 on the 2nd in Chicago.
+              msg("cmsg_new", 3, "2026-11-03T03:00:00Z"),
+            ],
+          },
+        }),
+        { outputRoot: root }
+      );
+
+      expect(dayDirs()).toEqual([day("2026-11-02"), day("2026-11-03")]);
+      expect(copiesOf("cmsg_m")).toBe(1);
+      expect(storedIds(day("2026-11-03"))).toEqual(["cmsg_m", "cmsg_reply"]);
+      expect(storedIds(day("2026-11-02"))).toEqual(["cmsg_new"]);
+      // The stored day keeps the zone its date was computed in.
+      expect(readJson("conversations", day("2026-11-03"), "messages.json").time_zone).toBe("UTC");
+    });
+
+    it("recovers a day a crash left only in <dir>.prev", async () => {
+      await runDuetSync(
+        makeSource({
+          timelines: {
+            [CHAN]: [
+              msg("cmsg_a", 1, "2026-11-02T09:00:00Z"),
+              msg("cmsg_b", 2, "2026-11-02T10:00:00Z"),
+            ],
+          },
+        }),
+        { outputRoot: root }
+      );
+      // A crash between "stash the old day" and "write the new one".
+      const dir = duetPath("conversations", day("2026-11-02"));
+      fs.renameSync(dir, `${dir}.prev`);
+
+      // The window moved on: cmsg_a is gone from the API.
+      await runDuetSync(
+        makeSource({
+          timelines: {
+            [CHAN]: [
+              msg("cmsg_b", 2, "2026-11-02T10:00:00Z", { body: "edited" }),
+              msg("cmsg_c", 3, "2026-11-02T11:00:00Z"),
+            ],
+          },
+        }),
+        { outputRoot: root }
+      );
+
+      expect(storedIds(day("2026-11-02"))).toEqual(["cmsg_a", "cmsg_b", "cmsg_c"]);
+      expect(readLog(day("2026-11-02"))).toContain("edited");
+    });
+
+    it("merges <dir> and <dir>.prev when both exist, the directory's copy winning", async () => {
+      const dir = duetPath("conversations", day("2026-11-02"));
+      const store = (messages: DuetMessage[]) =>
+        JSON.stringify({ channel_id: CHAN, date: "2026-11-02", time_zone: "UTC", messages });
+      fs.mkdirSync(`${dir}.prev`, { recursive: true });
+      fs.writeFileSync(
+        path.join(`${dir}.prev`, "messages.json"),
+        store([
+          msg("cmsg_a", 1, "2026-11-02T09:00:00Z"),
+          msg("cmsg_b", 2, "2026-11-02T10:00:00Z", { body: "stale" }),
+        ])
+      );
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "messages.json"),
+        store([msg("cmsg_b", 2, "2026-11-02T10:00:00Z", { body: "fresh" })])
+      );
+
+      await runDuetSync(
+        makeSource({ timelines: { [CHAN]: [msg("cmsg_c", 3, "2026-11-02T11:00:00Z")] } }),
+        { outputRoot: root }
+      );
+
+      expect(storedIds(day("2026-11-02"))).toEqual(["cmsg_a", "cmsg_b", "cmsg_c"]);
+      const log = readLog(day("2026-11-02"));
+      expect(log).toContain("fresh");
+      expect(log).not.toContain("stale");
+    });
+
+    it("never merges into or overwrites another channel's day with the same name", async () => {
+      // CHAN and CHAN2 share a name and an id tail, so their day names collide;
+      // the channel_id stored in messages.json tells them apart.
+      const events: DuetProgressEvent[] = [];
+      const result = await runDuetSync(
+        makeSource({
+          channels: [
+            { id: CHAN, name: "Home" },
+            { id: CHAN2, name: "Home" },
+          ],
+          timelines: {
+            [CHAN]: [msg("cmsg_h", 1, "2026-11-02T09:00:00Z")],
+            [CHAN2]: [msg("cmsg_w", 1, "2026-11-02T10:00:00Z", { channel_id: CHAN2 })],
+          },
+        }),
+        { outputRoot: root, onProgress: (e) => events.push(e) }
+      );
+
+      expect(result.errors).toBe(1);
+      expect(events.some((e) => e.type === "error" && e.scope === "channel Home")).toBe(true);
+      expect(storedIds(day("2026-11-02"))).toEqual(["cmsg_h"]);
+      expect(readJson("conversations", day("2026-11-02"), "messages.json").channel_id).toBe(CHAN);
+    });
+  });
 });
 
 describe("runDuetSyncGuarded", () => {
   it("reports a failure instead of throwing", async () => {
     const source = makeSource();
-    source.findProject = vi.fn(async () => {
+    source.lookupProject = vi.fn(async () => {
       throw new ClaudeSyncError("API request failed: 500 Server Error", 500);
     });
     const outcome = await runDuetSyncGuarded(source, { outputRoot: root });
@@ -542,7 +903,7 @@ describe("runDuetSyncGuarded", () => {
 
   it("reports a rate limit as a failure too", async () => {
     const source = makeSource();
-    source.findProject = vi.fn(async () => {
+    source.lookupProject = vi.fn(async () => {
       throw new RateLimitError(Math.floor(Date.now() / 1000) + 60);
     });
     const outcome = await runDuetSyncGuarded(source, { outputRoot: root });
@@ -551,7 +912,7 @@ describe("runDuetSyncGuarded", () => {
 
   it("reports a non-Error throw as a failure", async () => {
     const source = makeSource();
-    source.findProject = vi.fn(async () => {
+    source.lookupProject = vi.fn(async () => {
       throw "plain string";
     });
     const outcome = await runDuetSyncGuarded(source, { outputRoot: root });
@@ -562,6 +923,40 @@ describe("runDuetSyncGuarded", () => {
     const outcome = await runDuetSyncGuarded(makeSource({ project: null }), { outputRoot: root });
     expect(outcome.status).toBe("unavailable");
     expect(fs.existsSync(duetPath())).toBe(false);
+  });
+
+  it("carries the refusal status in the unavailable outcome", async () => {
+    const outcome = await runDuetSyncGuarded(makeSource({ project: null, refusedStatus: 403 }), {
+      outputRoot: root,
+    });
+    expect(outcome.status).toBe("unavailable");
+    expect(outcome.status === "unavailable" && outcome.result.refusedStatus).toBe(403);
+  });
+
+  it("treats a project the server created on a find-only request as an anomaly", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ channel: { id: CHAN, name: "Home" }, created: true }), {
+          status: 200,
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const duet = new DuetClient(
+        new ClaudeSyncClient(createMockAuth(), { rateLimitDelayMs: 0 }),
+        "org-123"
+      );
+      const outcome = await runDuetSyncGuarded(duet, { outputRoot: root });
+
+      expect(outcome).toEqual({
+        status: "failed",
+        message: expect.stringContaining("created a Duet project in response to a find-only request"),
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(duetPath())).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("reports a clean run as synced with the tally", async () => {

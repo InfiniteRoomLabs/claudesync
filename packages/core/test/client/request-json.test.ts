@@ -98,4 +98,28 @@ describe("requestJson", () => {
     );
     expect(await client().requestJson("https://claude.ai/v1/code/x")).toBeNull();
   });
+
+  it.each([
+    ["a foreign origin", "https://evil.example/x"],
+    ["a look-alike subdomain", "https://claude.ai.evil.example/x"],
+    ["userinfo that moves the host", "https://claude.ai@evil.example/x"],
+    ["plain http", "http://claude.ai/x"],
+    ["a relative string", "/v1/code/x"],
+  ])("refuses %s before taking a limiter slot or calling fetch", async (_label, url) => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const limiter = {
+      acquireRequestSlot: vi.fn(async () => {}),
+      onRequestSuccess: vi.fn(),
+      onThrottle: vi.fn(),
+    };
+    const guarded = new ClaudeSyncClient(createMockAuth(), { limiter });
+
+    const err = await guarded.requestJson(url).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ClaudeSyncError);
+    expect(err).not.toBeInstanceOf(RateLimitError);
+    expect(limiter.acquireRequestSlot).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

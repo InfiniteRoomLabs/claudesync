@@ -99,7 +99,10 @@ describe("Duet schemas", () => {
 
   it("require only the fields the code reads on a message", () => {
     expect(() => DuetMessageSchema.parse({ ...message, id: undefined })).toThrow();
-    expect(() => DuetMessageSchema.parse({ ...message, body: undefined })).toThrow();
+    // A null or missing body is accepted and rendered as empty.
+    expect(DuetMessageSchema.parse({ ...message, body: undefined }).body).toBeUndefined();
+    expect(DuetMessageSchema.parse({ ...message, body: null }).body).toBeNull();
+    expect(() => DuetMessageSchema.parse({ ...message, body: 5 })).toThrow();
     expect(() =>
       DuetMessageSchema.parse({ ...message, created_at: undefined })
     ).toThrow();

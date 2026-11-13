@@ -184,7 +184,7 @@ claudesync duet channels                        joined channels
 claudesync duet timeline [--channel <name|id>] [--limit N]
 claudesync duet thread <message-id> [--channel <name|id>]
 claudesync duet send <text> [--channel <name|id>] [--reply-to <message-id>]
-                                                use - as the text to read stdin
+                                                use - as the text to read stdin (64 KiB max)
 claudesync duet tasks [--all] [--suggested]     open tasks; --all adds done and suggested
 claudesync duet task add <title>
 claudesync duet task done <id> [--undo]
@@ -192,9 +192,10 @@ claudesync duet task rename <id> <title>
 claudesync duet sync [--output <path>]          write the duet/ tree below
 ```
 
-`--channel` defaults to the Duet project's own channel. Every command takes
-`--org`, `--json` and `--query`. `export-all` runs the Duet sync by default;
-`--no-duet` skips it, and a Duet failure never changes its exit code.
+`--channel` defaults to the Duet project's own channel. Every command except
+`duet sync` takes `--org`, `--json` and `--query`. `duet sync` takes `--org` and
+`--output`. `export-all` runs the Duet sync by default; `--no-duet` skips it,
+and a Duet failure never changes its exit code.
 
 `duet sync` and `export-all` write this tree under the output directory. It is
 read-only against Duet and idempotent: each sync upserts into `messages.json`, so

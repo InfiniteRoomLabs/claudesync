@@ -101,6 +101,73 @@ describe("DuetClient", () => {
     expect(await duet().findProject()).toBeNull();
   });
 
+  it.each([404, 403])("lookupProject carries the refusal status %i", async (status) => {
+    stubFetch({ error: "no" }, status);
+    expect(await duet().lookupProject()).toEqual({ project: null, status });
+  });
+
+  it("lookupProject returns the project when the server answers", async () => {
+    stubFetch({ channel: { id: CHAN }, created: false });
+    expect(await duet().lookupProject()).toEqual({
+      project: { channel: { id: CHAN }, created: false },
+    });
+  });
+
+  it("refuses a project the server created in response to find_only", async () => {
+    stubFetch({ channel: { id: CHAN }, created: true });
+    await expect(duet().findProject()).rejects.toThrow(
+      /created a Duet project in response to a find-only request/
+    );
+    await expect(duet().lookupProject()).rejects.toBeInstanceOf(ClaudeSyncError);
+  });
+
+  it("getTimeline skips malformed messages and counts them", async () => {
+    stubFetch({
+      data: [
+        { id: "cmsg_1", seq: "1", created_at: "2026-11-02T10:00:00Z", body: "ok" },
+        { seq: "2", created_at: "2026-11-02T10:00:00Z", body: "no id" },
+        { id: "cmsg_3", seq: "3", created_at: "2026-11-02T10:00:00Z", body: null },
+        { id: "cmsg_4", seq: "4", created_at: "2026-11-02T10:00:00Z" },
+        "not an object",
+      ],
+      linked_sessions: [],
+    });
+    const timeline = await duet().getTimeline(CHAN);
+    expect(timeline.data.map((m) => m.id)).toEqual(["cmsg_1", "cmsg_3", "cmsg_4"]);
+    expect(timeline.invalidItems).toBe(2);
+  });
+
+  it("getThread skips malformed messages too", async () => {
+    stubFetch({ data: [{ id: "cmsg_1", seq: "1", created_at: "x", body: "ok" }, { id: 5 }] });
+    const thread = await duet().getThread(CHAN, "cmsg_1");
+    expect(thread.data).toHaveLength(1);
+    expect(thread.invalidItems).toBe(1);
+  });
+
+  it("listTasks skips a task with no title and counts it", async () => {
+    stubFetch({
+      tasks: [
+        { id: "t1", data: { title: "Review the quarterly notes" } },
+        { id: "t2", data: { done: false } },
+      ],
+      artifact_id: "a",
+    });
+    const res = await duet().listTasks(CHAN);
+    expect(res.tasks.map((t) => t.id)).toEqual(["t1"]);
+    expect(res.invalidItems).toBe(1);
+  });
+
+  it("a clean list response carries no invalidItems field", async () => {
+    stubFetch({ tasks: [{ id: "t1", data: { title: "T" } }], artifact_id: "a" });
+    const res = await duet().listTasks(CHAN);
+    expect("invalidItems" in res).toBe(false);
+  });
+
+  it("a list response without its array still fails validation", async () => {
+    stubFetch({ nope: [] });
+    await expect(duet().getTimeline(CHAN)).rejects.toThrow();
+  });
+
   it("findProject rethrows other errors", async () => {
     stubFetch({ error: "boom" }, 500);
     const err = await duet()

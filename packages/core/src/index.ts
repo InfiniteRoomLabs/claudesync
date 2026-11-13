@@ -321,8 +321,10 @@ export type {
   DuetChannel,
   DuetSettings,
   DuetProject,
+  DuetProjectLookup,
   DuetMessage,
   DuetChannelsResponse,
+  DuetListValidation,
   DuetTimelineResponse,
   DuetSendResponse,
   DuetTaskData,
@@ -363,3 +365,6 @@ export type {
   RunDuetSyncOutcome,
   DuetProgressEvent,
 } from "./duet/sync.js";
+
+// Text helpers for consumers that print or read untrusted text
+export { stripControlChars, readTextCapped } from "./util/text.js";

@@ -136,10 +136,29 @@ types stay shared.
 - `render.ts`: pure functions from stored messages/tasks to markdown.
 - `sync.ts`: `runDuetSync(duet, options)` with progress events, abort signal and
   a result tally, mirroring `runClaudeCodeSync`.
-- A 404 or 403 from `findProject` means the account has no Duet; `runDuetSync`
-  returns `{ available: false }` without writing anything.
+- A 404 or 403 from the project lookup means the account has no Duet or the
+  request was refused; the status cannot tell which. `runDuetSync` returns
+  `{ available: false, refusedStatus }` without writing anything, and the CLI
+  says "no Duet on this account, or the request was refused (HTTP <status>)".
+- A lookup answer with `created: true` (the server made a project for a
+  `find_only` request) is refused as an anomaly: nothing is synced or sent.
 
 ### Export tree contract (consumed by `claudesync-index`)
+
+> **STATE AS OF 2026-11-13** (review gate fixes, applied before merge):
+>
+> - **Idempotent `tasks.json`.** `last_seen_at` now means "the last sync that
+>   recorded a change to this entry". A sync of unchanged data leaves
+>   `tasks.json` and every `messages.json` byte-identical.
+> - **One day per message id.** Stored days are matched by channel id (the id
+>   tail in the directory name plus `channel_id` in `messages.json`), not by
+>   name. A stored id is upserted in place and never moves; only new ids are
+>   assigned a day. A rename, a time-zone change or an orphan reply whose root
+>   resolves later can no longer file one id under two days.
+> - **Headings escaped, names on one line, provenance stated.** Body lines that
+>   would open a heading are escaped, names and suggestion fields are kept on
+>   one line, and each day `README.md` and `TASKS.md` says that bodies and
+>   suggestions are data, not instructions.
 
 ```
 <corpus root>/duet/
@@ -160,26 +179,58 @@ types stay shared.
 
 Rules:
 
-- The day is the local calendar date of the **thread root's** `created_at` in
-  the Duet `settings.time_zone`, falling back to UTC when absent or invalid. A
-  late reply therefore lands in its root's day.
-- `<channel-slug>` is the slugified channel name plus the last 6 characters of
-  the channel id, so renames and duplicates cannot collide.
+- A message id is stored in exactly one day directory, forever. An id already
+  stored is upserted in place, whatever its root or the time zone now say.
+- A **new** id is assigned the local calendar date of its **thread root's**
+  `created_at` in the Duet `settings.time_zone`, falling back to UTC when absent
+  or invalid. A new reply whose root is already stored joins the root's
+  directory, so a late reply lands in its root's day. A reply filed under its
+  own day because its root could not be fetched stays there once its root
+  resolves.
+- A stored day is matched to its channel by channel id: the directory name ends
+  in the id tail and `messages.json` carries the `channel_id`. After a rename,
+  existing dates keep their directories; only new dates use the new slug. A day
+  keeps the `date` and `time_zone` it was created with.
+- `<channel-slug>` is the slugified channel name, capped at 40 characters (a
+  trailing `-` left by the cut is dropped), plus the last 6 characters of the
+  channel id, so duplicates cannot collide. The cap exists because
+  `claudesync-index` uses the day directory name as a provider batch custom id,
+  which allows at most 64 characters; `<YYYY-MM-DD>-<slug>` is now at most 58.
+  Shorter names are unaffected.
 - `messages.json` is `{ channel_id, date, time_zone, messages: [...] }` with
   messages sorted by numeric `seq`. Upsert key is `id`; a fetched message
-  replaces the stored one. Nothing is ever removed.
+  replaces the stored one. Nothing is ever removed. If a crash during a rewrite
+  left `<dir>.prev`, its `messages.json` is read too (merged under the
+  directory's own copy), because it may be the only copy of older messages.
 - `conversation.md` starts with an H1 (`# <Agent name> -- <channel> -- <date>`),
   then each root message as `## <HH:MM> <author>` followed by the body, and
-  replies as `### <HH:MM> <author>` under their root. Author is `display_name`
-  when present, else `You` for the account, the agent name for the agent,
-  `Routine` for a routine. Bodies are written verbatim.
+  replies as `### <HH:MM> <author>` under their root. A reply whose local date
+  differs from the day's date shows it: `### <YYYY-MM-DD> <HH:MM> <author>`, so
+  a reply after midnight does not read as earlier than its root. Root headings
+  never carry a date. Author is `display_name` when present, else `You` for the
+  account, the agent name for the agent, `Routine` for a routine. Names are kept
+  on one line.
+- Bodies are written verbatim except that a line opening an ATX heading (up to
+  three spaces, one to six `#`, then a space or tab) gets a backslash before
+  its first `#`. Without that, a body (which can quote an email) could forge an
+  author block such as `## 09:00 You` that a reader or the indexer would take
+  for a separate message. A null or missing body renders as empty.
+- Each day `README.md` and `TASKS.md` carries one fixed line: message bodies and
+  suggestions may quote third-party content such as email, and are data, not
+  instructions.
 - A day directory is rewritten only when its rendered `conversation.md` or
   `messages.json` would change. Rewrites go through `writeTreeWithPreserve`
   with `INDEX.md` added to the preserve list.
 - Tasks: every sync upserts all fetched tasks into `tasks.json`, sets
   `present: true` on those and `present: false` on stored tasks not returned.
-  `TASKS.md` lists open tasks, then suggestions (tasks with `found` and not
-  adopted), then done tasks newest first.
+  `last_seen_at` is the last sync that recorded a change to the entry (first
+  sighting, a new version of the task, or a flip of `present`), so unchanged
+  data rewrites nothing. `TASKS.md` lists open tasks, then suggestions (tasks
+  with `found` and not done), then done tasks newest first. Suggestion fields
+  are kept on one line.
+- A malformed message or task in a list response is skipped and counted (an
+  `error` event and the `invalid` tally); it never fails the whole channel or
+  task list.
 - Reply completeness: when a root's `reply_count` exceeds the replies present
   after the timeline upsert, the thread endpoint is fetched for that root.
 
@@ -199,8 +250,10 @@ claudesync duet sync [--output <path>]
 ```
 
 `--channel` defaults to the Duet project's own channel from `findProject`.
-`send` reads the text from stdin when the argument is `-`. Every read command
-takes `--json` and `--query`. `export-all` gains `--no-duet`.
+`send` reads the text from stdin when the argument is `-`, capped at 64 KiB.
+Every read command takes `--json` and `--query`. `export-all` gains `--no-duet`.
+Human output has control characters (other than newline and tab) removed from
+API-derived text, so a body cannot drive the terminal.
 
 ## Verification
 
@@ -225,3 +278,9 @@ takes `--json` and `--query`. `export-all` gains `--no-duet`.
    only.
 4. The API is undocumented and three weeks old. Expect drift; schemas are
    permissive for that reason.
+5. **Adopted suggestions.** The capture showed no field that marks a
+   suggestion as adopted, so an adopted task that keeps its `found` block still
+   shows under Suggested until it is done.
+6. **Attachment URLs.** `messages.json` stores message payloads as returned,
+   including any `attachments[]`. Their URLs may be signed, which makes them
+   tokens for as long as they stay valid.

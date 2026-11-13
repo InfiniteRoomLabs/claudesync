@@ -4,15 +4,19 @@ import { ClaudeSyncError } from "../client/errors.js";
 import { buildDuetHeaders, DUET_ENDPOINTS } from "./endpoints.js";
 import {
   DuetChannelsResponseSchema,
+  DuetMessageSchema,
   DuetProjectSchema,
   DuetSendResponseSchema,
+  DuetTaskSchema,
   DuetTasksResponseSchema,
   DuetTaskWriteResponseSchema,
   DuetTimelineResponseSchema,
 } from "./schemas.js";
 import type {
   DuetChannel,
+  DuetListValidation,
   DuetProject,
+  DuetProjectLookup,
   DuetSendResponse,
   DuetTaskPatch,
   DuetTasksResponse,
@@ -65,6 +69,42 @@ export interface DuetCreateTaskOptions {
 const CHANNEL_ID_PREFIX = "chan_";
 
 /**
+ * Validate a list response entry by entry, so one malformed entry is dropped and
+ * counted instead of failing the whole list. The API is young and undocumented,
+ * and a single message with an unexpected shape would otherwise fail its
+ * channel on every run.
+ *
+ * @param schema - Schema of the whole response; it validates the kept entries
+ * a second time, which also types them.
+ * @param data - The decoded, unvalidated response body.
+ * @param key - Name of the list field, such as `data` or `tasks`.
+ * @param item - Schema of one entry.
+ * @returns The validated response holding only the valid entries, with
+ * `invalidItems` set when any were dropped (and absent otherwise, so a clean
+ * response is unchanged).
+ * @throws {@link Error} (a Zod error) when the envelope itself is invalid, for
+ * example when the list field is missing.
+ */
+function parseList<T extends object>(
+  schema: { parse(value: unknown): T },
+  data: unknown,
+  key: string,
+  item: { safeParse(value: unknown): { success: boolean } }
+): T & DuetListValidation {
+  const list =
+    data !== null && typeof data === "object"
+      ? (data as Record<string, unknown>)[key]
+      : undefined;
+  if (!Array.isArray(list)) {
+    return schema.parse(data);
+  }
+  const kept = list.filter((entry) => item.safeParse(entry).success);
+  const parsed = schema.parse({ ...(data as Record<string, unknown>), [key]: kept });
+  const invalid = list.length - kept.length;
+  return invalid > 0 ? { ...parsed, invalidItems: invalid } : parsed;
+}
+
+/**
  * Typed client for the Claude Duet API (`/v1/code/...`, wire name `aibo`).
  *
  * Composes a {@link ClaudeSyncClient} through its public `requestJson` method,
@@ -107,28 +147,57 @@ export class DuetClient {
   }
 
   /**
-   * Look up the account's Duet project without creating one.
+   * Look up the account's Duet project without creating one, keeping the HTTP
+   * status of a refusal so the caller can report it.
    *
-   * @returns The project, or `null` when the server answers 404 or 403, which
-   * means the account has no Duet.
+   * The request carries `find_only: true`, yet the response has a `created`
+   * field. A response with `created === true` means the server made a project
+   * for a request that only asked to find one; that is treated as an anomaly
+   * and refused, so a read such as `export-all` can never quietly be the thing
+   * that created a Duet.
+   *
+   * @returns `{ project }`, or `{ project: null, status }` when the server
+   * answers 404 or 403. Either status can mean the account has no Duet or that
+   * the request was refused (for example over a header).
+   * @throws {@link ClaudeSyncError} when the server reports it created a project.
    * @throws {@link ClaudeSyncError} on any other failure or a schema mismatch.
    */
-  async findProject(): Promise<DuetProject | null> {
+  async lookupProject(): Promise<DuetProjectLookup> {
+    let data: unknown;
     try {
-      const data = await this.call(DUET_ENDPOINTS.project, {
+      data = await this.call(DUET_ENDPOINTS.project, {
         method: "POST",
         body: JSON.stringify({ find_only: true }),
       });
-      return DuetProjectSchema.parse(data);
     } catch (err) {
       if (
         err instanceof ClaudeSyncError &&
         (err.statusCode === 404 || err.statusCode === 403)
       ) {
-        return null;
+        return { project: null, status: err.statusCode };
       }
       throw err;
     }
+    const project = DuetProjectSchema.parse(data);
+    if (project.created === true) {
+      throw new ClaudeSyncError(
+        "Duet anomaly: the server created a Duet project in response to a find-only request, " +
+          "so nothing was synced or sent. Check the account in the Duet app."
+      );
+    }
+    return { project };
+  }
+
+  /**
+   * Look up the account's Duet project without creating one. Same as
+   * {@link DuetClient.lookupProject}, minus the refusal status.
+   *
+   * @returns The project, or `null` when the server answers 404 or 403.
+   * @throws {@link ClaudeSyncError} when the server reports it created a project.
+   * @throws {@link ClaudeSyncError} on any other failure or a schema mismatch.
+   */
+  async findProject(): Promise<DuetProject | null> {
+    return (await this.lookupProject()).project;
   }
 
   /**
@@ -148,15 +217,17 @@ export class DuetClient {
    *
    * @param channelId - Channel id (`chan_...`).
    * @param options - Optional result cap; defaults to 200, the observed maximum.
-   * @returns The validated messages and linked sessions.
-   * @throws {@link ClaudeSyncError} on request failure or schema mismatch.
+   * @returns The validated messages and linked sessions. Malformed messages are
+   * dropped and counted in `invalidItems`.
+   * @throws {@link ClaudeSyncError} on request failure.
+   * @throws {@link Error} (a Zod error) when the response envelope is invalid.
    */
   async getTimeline(
     channelId: string,
     options?: DuetLimitOptions
   ): Promise<DuetTimelineResponse> {
     const data = await this.call(DUET_ENDPOINTS.timeline(channelId, options?.limit));
-    return DuetTimelineResponseSchema.parse(data);
+    return parseList(DuetTimelineResponseSchema, data, "data", DuetMessageSchema);
   }
 
   /**
@@ -165,8 +236,10 @@ export class DuetClient {
    * @param channelId - Channel id (`chan_...`).
    * @param messageId - Id of the thread root message.
    * @param options - Optional result cap; defaults to 200.
-   * @returns The validated messages and linked sessions.
-   * @throws {@link ClaudeSyncError} on request failure or schema mismatch.
+   * @returns The validated messages and linked sessions. Malformed messages are
+   * dropped and counted in `invalidItems`.
+   * @throws {@link ClaudeSyncError} on request failure.
+   * @throws {@link Error} (a Zod error) when the response envelope is invalid.
    */
   async getThread(
     channelId: string,
@@ -176,7 +249,7 @@ export class DuetClient {
     const data = await this.call(
       DUET_ENDPOINTS.thread(channelId, messageId, options?.limit)
     );
-    return DuetTimelineResponseSchema.parse(data);
+    return parseList(DuetTimelineResponseSchema, data, "data", DuetMessageSchema);
   }
 
   /**
@@ -219,15 +292,17 @@ export class DuetClient {
    *
    * @param channelId - Channel id (`chan_...`).
    * @param options - Optional result cap; defaults to 200.
-   * @returns The validated tasks and backing artifact id.
-   * @throws {@link ClaudeSyncError} on request failure or schema mismatch.
+   * @returns The validated tasks and backing artifact id. Malformed tasks (one
+   * with no title, say) are dropped and counted in `invalidItems`.
+   * @throws {@link ClaudeSyncError} on request failure.
+   * @throws {@link Error} (a Zod error) when the response envelope is invalid.
    */
   async listTasks(
     channelId: string,
     options?: DuetLimitOptions
   ): Promise<DuetTasksResponse> {
     const data = await this.call(DUET_ENDPOINTS.tasks(channelId, options?.limit));
-    return DuetTasksResponseSchema.parse(data);
+    return parseList(DuetTasksResponseSchema, data, "tasks", DuetTaskSchema);
   }
 
   /**

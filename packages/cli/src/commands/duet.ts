@@ -8,13 +8,50 @@ import {
   localDate,
   localTime,
   normalizeTimeZone,
+  readTextCapped,
   runDuetSync,
+  stripControlChars,
   type DuetMessage,
   type DuetProgressEvent,
   type DuetTask,
+  type DuetTimelineResponse,
   type RunDuetSyncOutcome,
 } from "@infinite-room-labs/claudesync-core";
 import { createClient, outputJson, resolveOrgId } from "../utils.js";
+
+/**
+ * Largest message `duet send -` reads from stdin: 64 KiB. Far above any chat
+ * message, and low enough that an accidental pipe of a large file fails fast
+ * instead of being buffered and posted.
+ */
+const MAX_STDIN_BYTES = 64 * 1024;
+
+/**
+ * Print one line of human output. Every human-form line goes through here,
+ * because most carry API-derived text (bodies, names, titles, suggestion
+ * fields) whose control characters could drive the terminal.
+ *
+ * @param line - The line; control characters other than newline and tab are
+ * removed before printing.
+ */
+function say(line = ""): void {
+  console.log(stripControlChars(line));
+}
+
+/**
+ * Explain why there is no Duet project, in the words every command uses. A 403
+ * or 404 can mean the account has no Duet or that the request was refused (for
+ * example over a header the server enforces), so both are named.
+ *
+ * @param refusedStatus - HTTP status of the refused lookup; undefined when the
+ * server answered with a project that has no channel.
+ * @returns A sentence fragment with no trailing punctuation.
+ */
+function noDuetReason(refusedStatus: number | undefined): string {
+  return refusedStatus === undefined
+    ? "no Duet project channel on this account"
+    : `no Duet on this account, or the request was refused (HTTP ${refusedStatus})`;
+}
 
 /** Options shared by every `duet` subcommand that talks to the API. */
 interface CommonOptions {
@@ -54,6 +91,21 @@ async function connect(org?: string): Promise<DuetClient> {
 }
 
 /**
+ * Connect, then resolve the channel a subcommand acts on.
+ *
+ * @param org - Optional organization id override.
+ * @param channel - Channel name or id; omitted means the Duet project channel.
+ * @returns The client and the resolved channel id.
+ */
+async function connectToChannel(
+  org?: string,
+  channel?: string
+): Promise<{ duet: DuetClient; channelId: string }> {
+  const duet = await connect(org);
+  return { duet, channelId: await duet.resolveChannelId(channel) };
+}
+
+/**
  * Print JSON when the user asked for it, otherwise run the human renderer.
  *
  * @param options - The parsed common options.
@@ -84,16 +136,19 @@ function parseLimit(value: string): number {
 }
 
 /**
- * Read all of standard input as UTF-8 text.
+ * Read all of standard input as UTF-8 text, up to {@link MAX_STDIN_BYTES}.
  *
  * @returns The full input.
+ * @throws {@link Error} when stdin holds more than 64 KiB; nothing is sent.
  */
 async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk as Buffer);
+  try {
+    return await readTextCapped(process.stdin, MAX_STDIN_BYTES);
+  } catch {
+    throw new Error(
+      `stdin is larger than 64 KiB (${MAX_STDIN_BYTES} bytes); a Duet message read from stdin is capped there. Nothing was sent.`
+    );
   }
-  return Buffer.concat(chunks).toString("utf-8");
 }
 
 /**
@@ -123,18 +178,39 @@ function printMessages(
   context: { agentName: string; timeZone: string }
 ): void {
   if (messages.length === 0) {
-    console.log("No messages.");
+    say("No messages.");
     return;
   }
   for (const m of [...messages].sort((a, b) => compareSeq(a.seq, b.seq))) {
     const when = `${localDate(m.created_at, context.timeZone)} ${localTime(m.created_at, context.timeZone)}`;
     const root = m.thread_root_id && m.thread_root_id !== m.id ? `  (reply to ${m.thread_root_id})` : "";
-    console.log(`[${when}] ${authorLabel(m, context.agentName)}  ${m.id}${root}`);
-    for (const line of m.body.split("\n")) {
-      console.log(`  ${line}`);
+    say(`[${when}] ${authorLabel(m, context.agentName)}  ${m.id}${root}`);
+    for (const line of (m.body ?? "").split("\n")) {
+      say(`  ${line}`);
     }
-    console.log();
+    say();
   }
+}
+
+/**
+ * Print a timeline or thread response: JSON when asked for, otherwise the
+ * human form. Only the human form needs the agent name and time zone, so only
+ * it costs the extra project lookup.
+ *
+ * @param options - The parsed common options.
+ * @param duet - The Duet client, for {@link displayContext}.
+ * @param response - The timeline or thread to print.
+ */
+async function emitMessages(
+  options: CommonOptions,
+  duet: DuetClient,
+  response: DuetTimelineResponse
+): Promise<void> {
+  if (options.json || options.query) {
+    outputJson(response, options.query);
+    return;
+  }
+  printMessages(response.data, await displayContext(duet));
 }
 
 /**
@@ -144,14 +220,14 @@ function printMessages(
  */
 function printTasks(tasks: readonly DuetTask[]): void {
   if (tasks.length === 0) {
-    console.log("No tasks.");
+    say("No tasks.");
     return;
   }
   for (const t of tasks) {
     const tag = isSuggestion(t) ? " (suggested)" : "";
-    console.log(`[${t.data.done ? "x" : " "}] ${t.id}  ${t.data.title}${tag}`);
+    say(`[${t.data.done ? "x" : " "}] ${t.id}  ${t.data.title}${tag}`);
     if (t.data.found?.why) {
-      console.log(`      why: ${t.data.found.why}`);
+      say(`      why: ${t.data.found.why}`);
     }
   }
 }
@@ -165,16 +241,18 @@ function printTasks(tasks: readonly DuetTask[]): void {
 export function printDuetProgress(e: DuetProgressEvent): void {
   switch (e.type) {
     case "start":
-      console.log(`  Duet: ${e.channels} channel(s)`);
+      say(`  Duet: ${e.channels} channel(s)`);
       break;
     case "channel-done":
-      console.log(`[duet] ${e.channel}: ${e.written} day(s) written, ${e.unchanged} unchanged`);
+      say(`[duet] ${e.channel}: ${e.written} day(s) written, ${e.unchanged} unchanged`);
       break;
     case "tasks-done":
-      console.log(`[duet] tasks: ${e.tasks}`);
+      say(`[duet] tasks: ${e.tasks}`);
       break;
     case "error":
-      console.error(`  Duet note: ${e.scope}: ${e.message.replace(/\s+/g, " ")}`);
+      console.error(
+        stripControlChars(`  Duet note: ${e.scope}: ${e.message.replace(/\s+/g, " ")}`)
+      );
       break;
   }
 }
@@ -183,14 +261,14 @@ export function printDuetProgress(e: DuetProgressEvent): void {
  * Describe a guarded Duet sync outcome as one line for the end of an export.
  *
  * @param outcome - The outcome of `runDuetSyncGuarded`.
- * @returns A single printable line, with no newline.
+ * @returns A single printable line, with no newline and no control characters.
  */
 export function describeDuetOutcome(outcome: RunDuetSyncOutcome): string {
   switch (outcome.status) {
     case "unavailable":
-      return "Duet: not available on this account, skipped.";
+      return `Duet: ${noDuetReason(outcome.result.refusedStatus)}, skipped.`;
     case "failed":
-      return `Duet: skipped (${outcome.message.replace(/\s+/g, " ")}).`;
+      return stripControlChars(`Duet: skipped (${outcome.message.replace(/\s+/g, " ")}).`);
     case "synced": {
       const r = outcome.result;
       return (
@@ -207,19 +285,20 @@ const statusCommand = withCommon(
   new Command("status").description("Show the Duet project: agent, channel, time zone, routines")
 ).action(async (options: CommonOptions) => {
   const duet = await connect(options.org);
-  const project = await duet.findProject();
+  const lookup = await duet.lookupProject();
+  const project = lookup.project;
   emit(options, project, () => {
     if (!project) {
-      console.log("This account has no Duet project.");
+      say(`Duet: ${noDuetReason(lookup.status)}.`);
       return;
     }
     const s = project.settings;
-    console.log(`Agent:      ${s?.agent_name ?? "(unnamed)"}`);
-    console.log(`Channel:    ${project.channel?.id ?? "(none)"}`);
-    console.log(`Time zone:  ${s?.time_zone ?? "(unset, UTC assumed)"}`);
-    console.log(`Language:   ${s?.language ?? "(unset)"}`);
-    console.log(`Purpose:    ${s?.purpose ?? "(unset)"}`);
-    console.log(`Routines:   ${project.routines_paused ? "paused" : "running"}`);
+    say(`Agent:      ${s?.agent_name ?? "(unnamed)"}`);
+    say(`Channel:    ${project.channel?.id ?? "(none)"}`);
+    say(`Time zone:  ${s?.time_zone ?? "(unset, UTC assumed)"}`);
+    say(`Language:   ${s?.language ?? "(unset)"}`);
+    say(`Purpose:    ${s?.purpose ?? "(unset)"}`);
+    say(`Routines:   ${project.routines_paused ? "paused" : "running"}`);
   });
   if (!project) process.exitCode = 1;
 });
@@ -232,10 +311,10 @@ const channelsCommand = withCommon(
   const channels = await duet.listChannels();
   emit(options, channels, () => {
     if (channels.length === 0) {
-      console.log("No channels.");
+      say("No channels.");
     }
     for (const c of channels) {
-      console.log(`${c.id}  ${c.name ?? "(unnamed)"}`);
+      say(`${c.id}  ${c.name ?? "(unnamed)"}`);
     }
   });
 });
@@ -247,12 +326,8 @@ const timelineCommand = withCommon(
     .option("--channel <name|id>", "Channel name or id (default: the Duet project channel)")
     .option("--limit <n>", "Maximum entries to fetch (default 200)", parseLimit)
 ).action(async (options: CommonOptions & { channel?: string; limit?: number }) => {
-  const duet = await connect(options.org);
-  const channelId = await duet.resolveChannelId(options.channel);
-  const timeline = await duet.getTimeline(channelId, { limit: options.limit });
-  const wantsJson = options.json || options.query;
-  const context = wantsJson ? undefined : await displayContext(duet);
-  emit(options, timeline, () => printMessages(timeline.data, context!));
+  const { duet, channelId } = await connectToChannel(options.org, options.channel);
+  await emitMessages(options, duet, await duet.getTimeline(channelId, { limit: options.limit }));
 });
 
 /** `duet thread`: show one thread. */
@@ -263,11 +338,8 @@ const threadCommand = withCommon(
     .option("--channel <name|id>", "Channel name or id (default: the Duet project channel)")
 ).action(
   async (messageId: string, options: CommonOptions & { channel?: string }) => {
-    const duet = await connect(options.org);
-    const channelId = await duet.resolveChannelId(options.channel);
-    const thread = await duet.getThread(channelId, messageId);
-    const context = options.json || options.query ? undefined : await displayContext(duet);
-    emit(options, thread, () => printMessages(thread.data, context!));
+    const { duet, channelId } = await connectToChannel(options.org, options.channel);
+    await emitMessages(options, duet, await duet.getThread(channelId, messageId));
   }
 );
 
@@ -285,16 +357,13 @@ const sendCommand = withCommon(
   ) => {
     // One trailing newline is the shell's, not the author's, so drop it.
     const body = text === "-" ? (await readStdin()).replace(/\r?\n$/, "") : text;
-    const duet = await connect(options.org);
-    const channelId = await duet.resolveChannelId(options.channel);
+    const { duet, channelId } = await connectToChannel(options.org, options.channel);
     const sent = await duet.sendMessage(channelId, {
       body,
       replyToMessageId: options.replyTo,
     });
     emit(options, sent, () => {
-      console.log(
-        `Sent ${sent.message_id}${sent.deduplicated ? " (deduplicated)" : ""}`
-      );
+      say(`Sent ${sent.message_id}${sent.deduplicated ? " (deduplicated)" : ""}`);
     });
   }
 );
@@ -307,8 +376,7 @@ const tasksCommand = withCommon(
     .option("--suggested", "Show only suggestions the agent surfaced")
 ).action(
   async (options: CommonOptions & { all?: boolean; suggested?: boolean }) => {
-    const duet = await connect(options.org);
-    const channelId = await duet.resolveChannelId();
+    const { duet, channelId } = await connectToChannel(options.org);
     const { tasks } = await duet.listTasks(channelId);
     const shown = tasks.filter((t) => {
       if (options.all) return true;
@@ -323,10 +391,10 @@ const tasksCommand = withCommon(
 const taskAddCommand = withCommon(
   new Command("add").description("Create a task").argument("<title>", "Task title")
 ).action(async (title: string, options: CommonOptions) => {
-  const duet = await connect(options.org);
-  const written = await duet.createTask(await duet.resolveChannelId(), title);
+  const { duet, channelId } = await connectToChannel(options.org);
+  const written = await duet.createTask(channelId, title);
   emit(options, written, () => {
-    console.log(`Created ${written.task.id}: ${written.task.data.title}`);
+    say(`Created ${written.task.id}: ${written.task.data.title}`);
   });
 });
 
@@ -337,12 +405,10 @@ const taskDoneCommand = withCommon(
     .argument("<id>", "Task id")
     .option("--undo", "Reopen the task instead")
 ).action(async (id: string, options: CommonOptions & { undo?: boolean }) => {
-  const duet = await connect(options.org);
-  const written = await duet.updateTask(await duet.resolveChannelId(), id, {
-    done: !options.undo,
-  });
+  const { duet, channelId } = await connectToChannel(options.org);
+  const written = await duet.updateTask(channelId, id, { done: !options.undo });
   emit(options, written, () => {
-    console.log(`${options.undo ? "Reopened" : "Done"} ${written.task.id}: ${written.task.data.title}`);
+    say(`${options.undo ? "Reopened" : "Done"} ${written.task.id}: ${written.task.data.title}`);
   });
 });
 
@@ -353,10 +419,10 @@ const taskRenameCommand = withCommon(
     .argument("<id>", "Task id")
     .argument("<title>", "New title")
 ).action(async (id: string, title: string, options: CommonOptions) => {
-  const duet = await connect(options.org);
-  const written = await duet.updateTask(await duet.resolveChannelId(), id, { title });
+  const { duet, channelId } = await connectToChannel(options.org);
+  const written = await duet.updateTask(channelId, id, { title });
   emit(options, written, () => {
-    console.log(`Renamed ${written.task.id}: ${written.task.data.title}`);
+    say(`Renamed ${written.task.id}: ${written.task.data.title}`);
   });
 });
 
@@ -389,7 +455,7 @@ const syncCommand = new Command("sync")
         onProgress: printDuetProgress,
       });
       if (!result.available) {
-        console.log("This account has no Duet project; nothing exported.");
+        say(`Duet: ${noDuetReason(result.refusedStatus)}; nothing exported.`);
         process.exitCode = 1;
         return;
       }
@@ -398,6 +464,7 @@ const syncCommand = new Command("sync")
       console.log(`  Channels: ${result.channels}, messages fetched: ${result.messages}`);
       console.log(`  Days written: ${result.daysWritten}, unchanged: ${result.daysUnchanged}`);
       console.log(`  Tasks: ${result.tasks}`);
+      if (result.invalid > 0) console.log(`  Malformed entries skipped: ${result.invalid}`);
       if (result.errors > 0) console.log(`  Errors: ${result.errors}`);
       if (abortController.signal.aborted) {
         process.exitCode = 130;
