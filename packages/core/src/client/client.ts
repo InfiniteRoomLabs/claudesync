@@ -68,6 +68,41 @@ export interface PutProjectMemoryControlsOptions {
   timeoutMs?: number;
 }
 
+/**
+ * The only origin this client sends requests to. Every request carries the
+ * claude.ai session cookie, so a URL on any other origin would hand that cookie
+ * to a third party.
+ */
+const CLAUDE_ORIGIN = "https://claude.ai";
+
+/**
+ * Refuse any URL whose origin is not exactly {@link CLAUDE_ORIGIN}.
+ *
+ * Compares the parsed origin rather than a string prefix, because a prefix
+ * check passes look-alikes such as `https://claude.ai.evil.example/` and
+ * `https://claude.ai@evil.example/` (userinfo that moves the host).
+ *
+ * @param url - The URL about to be requested.
+ * @throws {@link ClaudeSyncError} (no status code) when `url` is not absolute or
+ * its origin is anything but `https://claude.ai`. The message names the
+ * offending origin, never the full URL, which may carry a token.
+ */
+function assertClaudeOrigin(url: string): void {
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    throw new ClaudeSyncError(
+      `Refusing to send a request: the URL is not absolute (only ${CLAUDE_ORIGIN} is allowed).`
+    );
+  }
+  if (origin !== CLAUDE_ORIGIN) {
+    throw new ClaudeSyncError(
+      `Refusing to send a request to ${origin}: only ${CLAUDE_ORIGIN} receives the session cookie.`
+    );
+  }
+}
+
 /** Content types that are textual despite not starting with `text/`. */
 const TEXT_APP_CONTENT_TYPE =
   /^application\/(json|xml|javascript|x-ndjson|x-yaml|yaml)\b|^application\/[\w.+-]+\+(json|xml)\b/;
@@ -140,10 +175,16 @@ export class ClaudeSyncClient {
    * through one of those two, so this is the single choke point for transport
    * behavior.
    *
-   * @param url - Absolute URL, typically from {@link buildUrl}.
+   * Because it is the choke point, it is also where the origin is enforced: a
+   * URL whose origin is not `https://claude.ai` is refused before a limiter slot
+   * is taken and before `fetch`, so the session cookie never leaves claude.ai.
+   *
+   * @param url - Absolute claude.ai URL, typically from {@link buildUrl}.
    * @param init - Optional `fetch` init (method, body, headers, signal, ...).
    * Defaults to a plain GET when omitted.
    * @returns The successful (2xx) `fetch` response, body unread.
+   * @throws {@link ClaudeSyncError} (no status code) when `url` is not on
+   * `https://claude.ai`. Nothing is sent.
    * @throws {@link RateLimitError} on HTTP 429. The limiter is notified to back
    * off before the error is thrown.
    * @throws {@link ClaudeSyncError} on any other non-2xx response.
@@ -152,6 +193,7 @@ export class ClaudeSyncClient {
     url: string,
     init?: RequestInit
   ): Promise<Response> {
+    assertClaudeOrigin(url);
     await this.limiter.acquireRequestSlot();
 
     const authHeaders = await this.auth.getHeaders();
@@ -210,6 +252,41 @@ export class ClaudeSyncClient {
    */
   private async requestRaw(url: string): Promise<Response> {
     return this.requestResponse(url);
+  }
+
+  /**
+   * Issue a paced request with any method and body and return the parsed JSON.
+   *
+   * Public entry point for sibling clients that talk to claude.ai path families
+   * other than the `/api/organizations/...` surface this class wraps (for
+   * example the Duet client). It exposes the same choke point as every other
+   * method, {@link ClaudeSyncClient.requestResponse}, so limiter pacing, auth
+   * header injection, the case-insensitive header merge, 429 handling and
+   * non-2xx error mapping are shared rather than re-implemented.
+   *
+   * A successful response with an empty body (for example a 204) yields `null`
+   * instead of a JSON parse error.
+   *
+   * It only reaches claude.ai. The session cookie rides on every request, so a
+   * URL whose origin is not exactly `https://claude.ai` (another host, a
+   * look-alike, plain `http`, or a relative string) is refused before any
+   * request is made. Never pass it a URL taken from an API payload, such as an
+   * attachment link, expecting it to be fetched.
+   *
+   * @param url - Absolute URL on `https://claude.ai`.
+   * @param init - Optional `fetch` init (method, body, headers, signal, ...).
+   * Defaults to a plain GET when omitted.
+   * @returns The decoded JSON value (still untyped; callers validate with Zod),
+   * or `null` for an empty body.
+   * @throws {@link ClaudeSyncError} (no status code) when `url` is not on
+   * `https://claude.ai`; nothing is sent.
+   * @throws {@link RateLimitError} on HTTP 429.
+   * @throws {@link ClaudeSyncError} on any other non-2xx response.
+   */
+  async requestJson(url: string, init?: RequestInit): Promise<unknown> {
+    const response = await this.requestResponse(url, init);
+    const text = await response.text();
+    return text === "" ? null : JSON.parse(text);
   }
 
   // --- Account ---

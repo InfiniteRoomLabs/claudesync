@@ -5,12 +5,15 @@ import {
   resolveConcurrencyConfig,
   resolveBehaviorConfig,
   runOrgSync,
+  runDuetSyncGuarded,
+  DuetClient,
   type BehaviorConfig,
   type OnBecameEmpty,
   type ExportFormat,
   type ProgressEvent,
 } from "@infinite-room-labs/claudesync-core";
 import { createClient, resolveOrgId } from "../utils.js";
+import { describeDuetOutcome, printDuetProgress } from "./duet.js";
 
 const parseIntArg = (value: string): number => {
   const n = Number.parseInt(value, 10);
@@ -128,10 +131,15 @@ export const exportAllCommand = new Command("export-all")
     "--on-became-empty <policy>",
     "Policy for a previously-exported conversation that has since become empty: sync (default, re-materializes and records the deletion), retain (keeps the existing output untouched), or clean (removes the generated output). Env: CLAUDESYNC_ON_BECAME_EMPTY"
   )
+  .option(
+    "--no-duet",
+    "Skip the Claude Duet export (by default Duet chat and tasks are written to <output>/duet/; a Duet failure never changes the exit code)"
+  )
   .action(
     async (options: {
       org?: string;
       output?: string;
+      duet: boolean;
       format: ExportFormat;
       authorName: string;
       authorEmail: string;
@@ -247,7 +255,21 @@ export const exportAllCommand = new Command("export-all")
           }
           console.log(emptyLine);
         }
-        if (aborted) {
+
+        // Duet is an add-on: its outcome is printed as one note and is
+        // deliberately kept out of the exit code logic below.
+        if (options.duet && !aborted) {
+          const duetOutcome = await runDuetSyncGuarded(new DuetClient(client, orgId), {
+            outputRoot,
+            preserve: options.preserve,
+            signal: abortController.signal,
+            onProgress: printDuetProgress,
+          });
+          console.log(describeDuetOutcome(duetOutcome));
+        }
+
+        // Re-read the signal: a Ctrl-C during the Duet phase counts too.
+        if (abortController.signal.aborted) {
           process.exitCode = 130; // 128 + SIGINT
         } else if (result.errors > 0) {
           process.exitCode = 1;

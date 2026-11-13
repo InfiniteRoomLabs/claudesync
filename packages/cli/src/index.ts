@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
 import { Command } from "commander";
-import { AuthError, ClaudeSyncError, RateLimitError } from "@infinite-room-labs/claudesync-core";
+import {
+  AuthError,
+  ClaudeSyncError,
+  RateLimitError,
+  stripControlChars,
+} from "@infinite-room-labs/claudesync-core";
 import { lsCommand } from "./commands/ls.js";
 import { exportCommand } from "./commands/export.js";
 import { projectsCommand } from "./commands/projects.js";
@@ -9,6 +14,7 @@ import { searchCommand } from "./commands/search.js";
 import { exportAllCommand } from "./commands/export-all.js";
 import { claudeCodeCommand } from "./commands/claude-code.js";
 import { conversationsCommand } from "./commands/conversations.js";
+import { duetCommand } from "./commands/duet.js";
 
 /**
  * The package's own version, read from `package.json` at startup so
@@ -31,6 +37,7 @@ program.addCommand(searchCommand);
 program.addCommand(exportAllCommand);
 program.addCommand(claudeCodeCommand);
 program.addCommand(conversationsCommand);
+program.addCommand(duetCommand);
 
 // TUI subcommand
 program
@@ -61,13 +68,15 @@ function handleError(error: unknown): void {
     process.exit(1);
   }
 
+  // Error text can quote API data (an HTTP status text, Duet channel names), so
+  // control characters are removed before it reaches the terminal.
   if (error instanceof ClaudeSyncError) {
-    console.error(`API error: ${error.message}`);
+    console.error(`API error: ${stripControlChars(error.message)}`);
     process.exit(1);
   }
 
   if (error instanceof Error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`Error: ${stripControlChars(error.message)}`);
     process.exit(1);
   }
 

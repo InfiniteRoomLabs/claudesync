@@ -297,3 +297,74 @@ export type {
   ClaudeCodeProgressEvent,
 } from "./claude-code/sync.js";
 export { runClaudeCodeSync } from "./claude-code/sync.js";
+
+// Claude Duet (built from a captured session; not yet verified against the live API)
+export { DUET_ENDPOINTS, DUET_DEFAULT_HEADERS, buildDuetHeaders } from "./duet/endpoints.js";
+export {
+  DuetChannelSchema,
+  DuetSettingsSchema,
+  DuetProjectSchema,
+  DuetMessageSchema,
+  DuetChannelsResponseSchema,
+  DuetTimelineResponseSchema,
+  DuetSendResponseSchema,
+  DuetTaskFoundSchema,
+  DuetTaskDataSchema,
+  DuetTaskSchema,
+  DuetTasksResponseSchema,
+  DuetTaskWriteResponseSchema,
+  DuetDayStoreSchema,
+  DuetStoredTaskSchema,
+  DuetTaskStoreSchema,
+} from "./duet/schemas.js";
+export type {
+  DuetChannel,
+  DuetSettings,
+  DuetProject,
+  DuetProjectLookup,
+  DuetMessage,
+  DuetChannelsResponse,
+  DuetListValidation,
+  DuetTimelineResponse,
+  DuetSendResponse,
+  DuetTaskData,
+  DuetTask,
+  DuetTasksResponse,
+  DuetTaskWriteResponse,
+  DuetTaskPatch,
+  DuetDayStore,
+  DuetStoredTask,
+  DuetTaskStore,
+} from "./duet/types.js";
+export { DuetClient } from "./duet/client.js";
+export type {
+  DuetClientOptions,
+  DuetSendMessageInput,
+  DuetLimitOptions,
+  DuetCreateTaskOptions,
+} from "./duet/client.js";
+export {
+  normalizeTimeZone,
+  localDate,
+  localTime,
+  channelSlug,
+  dayDirName,
+  compareSeq,
+  authorLabel,
+  renderDayLog,
+  renderDayReadme,
+  isSuggestion,
+  renderTasks,
+} from "./duet/render.js";
+export type { DuetDayRenderInput } from "./duet/render.js";
+export { runDuetSync, runDuetSyncGuarded } from "./duet/sync.js";
+export type {
+  DuetSource,
+  RunDuetSyncOptions,
+  RunDuetSyncResult,
+  RunDuetSyncOutcome,
+  DuetProgressEvent,
+} from "./duet/sync.js";
+
+// Text helpers for consumers that print or read untrusted text
+export { stripControlChars, readTextCapped } from "./util/text.js";
