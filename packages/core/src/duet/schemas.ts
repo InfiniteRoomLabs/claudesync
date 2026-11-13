@@ -201,3 +201,42 @@ export const DuetTaskWriteResponseSchema = z
     respaced_tasks: z.array(DuetTaskSchema).optional(),
   })
   .passthrough();
+
+/**
+ * On-disk shape of a day's canonical message store, `messages.json`. Messages
+ * keep every field the API returned, including ones this version does not know.
+ */
+export const DuetDayStoreSchema = z
+  .object({
+    /** Channel the day belongs to. */
+    channel_id: z.string(),
+    /** Local calendar date, `YYYY-MM-DD`, in {@link DuetDayStoreSchema.time_zone}. */
+    date: z.string(),
+    /** IANA time zone the date was computed in. */
+    time_zone: z.string(),
+    /** Every message ever synced for this day and channel, sorted by `seq`. */
+    messages: z.array(DuetMessageSchema),
+  })
+  .passthrough();
+
+/** One task's entry in the canonical task store, `tasks.json`. */
+export const DuetStoredTaskSchema = z
+  .object({
+    /** The task as last returned by the API. */
+    task: DuetTaskSchema,
+    /** Time of the first sync that saw the task (ISO 8601). */
+    first_seen_at: z.string(),
+    /** Time of the latest sync that saw the task (ISO 8601). */
+    last_seen_at: z.string(),
+    /** False once a sync no longer returns the task. The entry is kept. */
+    present: z.boolean(),
+  })
+  .passthrough();
+
+/** On-disk shape of `tasks.json`: stored tasks keyed by task id. */
+export const DuetTaskStoreSchema = z
+  .object({
+    /** Stored tasks keyed by task id. */
+    tasks: z.record(DuetStoredTaskSchema),
+  })
+  .passthrough();

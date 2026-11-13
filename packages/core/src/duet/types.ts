@@ -2,12 +2,15 @@ import type { z } from "zod";
 import type {
   DuetChannelSchema,
   DuetChannelsResponseSchema,
+  DuetDayStoreSchema,
   DuetMessageSchema,
   DuetProjectSchema,
   DuetSendResponseSchema,
   DuetSettingsSchema,
+  DuetStoredTaskSchema,
   DuetTaskDataSchema,
   DuetTaskSchema,
+  DuetTaskStoreSchema,
   DuetTasksResponseSchema,
   DuetTaskWriteResponseSchema,
   DuetTimelineResponseSchema,
@@ -53,3 +56,10 @@ export type DuetTaskPatch =
       /** Not allowed alongside `done`. */
       title?: never;
     };
+
+/** A day's canonical message store. Inferred from {@link DuetDayStoreSchema}. */
+export type DuetDayStore = z.infer<typeof DuetDayStoreSchema>;
+/** One entry of the canonical task store. Inferred from {@link DuetStoredTaskSchema}. */
+export type DuetStoredTask = z.infer<typeof DuetStoredTaskSchema>;
+/** The canonical task store. Inferred from {@link DuetTaskStoreSchema}. */
+export type DuetTaskStore = z.infer<typeof DuetTaskStoreSchema>;
